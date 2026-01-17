@@ -1,7 +1,8 @@
 """Pytest configuration and shared fixtures."""
 
-import pytest
 from decimal import Decimal
+
+import pytest
 
 
 @pytest.fixture
