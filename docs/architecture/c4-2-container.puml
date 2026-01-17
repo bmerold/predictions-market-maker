@@ -1,0 +1,34 @@
+@startuml C4_Container
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title Container Diagram - Predictions Market Maker
+
+Person(trader, "Trader", "Operates and monitors the market making bot")
+
+System_Boundary(market_maker, "Market Maker Bot") {
+    Container(core, "Trading Core", "Python, asyncio", "Main trading loop: receives market data, runs strategy, manages execution")
+
+    Container(web_ui, "Web Dashboard", "FastAPI, htmx", "Real-time monitoring UI showing positions, PnL, orders, and controls")
+
+    ContainerDb(database, "Database", "SQLite / PostgreSQL", "Persists orders, fills, positions, PnL snapshots for analysis")
+
+    Container(config, "Configuration", "YAML files", "Strategy parameters, risk limits, market selection")
+}
+
+System_Ext(kalshi, "Kalshi Exchange", "Prediction market exchange")
+System_Ext(polymarket, "Polymarket", "Decentralized prediction market (future)")
+
+Rel(trader, web_ui, "Monitors, controls", "HTTPS")
+Rel(trader, config, "Configures", "File system")
+
+Rel(core, kalshi, "Market data subscription", "WebSocket (wss://)")
+Rel(core, kalshi, "Order operations", "REST API (HTTPS)")
+Rel_R(core, polymarket, "Future integration", "WebSocket / REST")
+
+Rel(core, database, "Reads/writes", "SQLAlchemy async")
+Rel(web_ui, database, "Reads for display", "SQLAlchemy async")
+Rel(web_ui, core, "Status queries, commands", "In-process / async queues")
+Rel(core, config, "Loads on startup", "YAML")
+
+SHOW_LEGEND()
+@enduml

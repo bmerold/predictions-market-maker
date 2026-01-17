@@ -1,0 +1,158 @@
+@startuml Class_Domain_Models
+
+title Domain Models - Core Data Structures
+
+package "Core Value Objects" {
+    class Price {
+        +value: Decimal
+        +as_cents(): int
+        +as_probability(): Decimal
+        --
+        Represents price 0.01-0.99
+        for binary contracts
+    }
+
+    class Quantity {
+        +value: int
+        --
+        Number of contracts
+        Always positive
+    }
+
+    enum Side {
+        YES
+        NO
+    }
+
+    enum OrderSide {
+        BUY
+        SELL
+    }
+}
+
+package "Market Data" {
+    class PriceLevel {
+        +price: Price
+        +size: Quantity
+    }
+
+    class OrderBook {
+        +market_id: str
+        +yes_bids: List[PriceLevel]
+        +yes_asks: List[PriceLevel]
+        +timestamp: datetime
+        --
+        +best_bid(): PriceLevel
+        +best_ask(): PriceLevel
+        +mid_price(): Price
+        +spread(): Decimal
+    }
+
+    class MarketSnapshot {
+        +market_id: str
+        +mid_price: Price
+        +spread: Decimal
+        +best_bid: PriceLevel
+        +best_ask: PriceLevel
+        +volatility: Decimal
+        +time_to_settlement: timedelta
+        +timestamp: datetime
+    }
+
+    class Trade {
+        +market_id: str
+        +price: Price
+        +size: Quantity
+        +side: Side
+        +timestamp: datetime
+    }
+}
+
+package "Orders" {
+    enum OrderStatus {
+        PENDING
+        OPEN
+        PARTIALLY_FILLED
+        FILLED
+        CANCELLING
+        CANCELLED
+        REJECTED
+    }
+
+    class Order {
+        +id: str
+        +client_order_id: str
+        +market_id: str
+        +side: Side
+        +order_side: OrderSide
+        +price: Price
+        +size: Quantity
+        +filled_size: Quantity
+        +status: OrderStatus
+        +created_at: datetime
+        +updated_at: datetime
+        --
+        +remaining_size(): Quantity
+        +is_terminal(): bool
+    }
+
+    class Quote {
+        +bid_price: Price
+        +bid_size: Quantity
+        +ask_price: Price
+        +ask_size: Quantity
+        --
+        +spread(): Decimal
+    }
+
+    class QuoteSet {
+        +market_id: str
+        +yes_quote: Quote
+        +timestamp: datetime
+    }
+
+    class Fill {
+        +id: str
+        +order_id: str
+        +market_id: str
+        +side: Side
+        +order_side: OrderSide
+        +price: Price
+        +size: Quantity
+        +timestamp: datetime
+        +is_simulated: bool
+    }
+}
+
+package "Positions & PnL" {
+    class Position {
+        +market_id: str
+        +yes_quantity: Quantity
+        +no_quantity: Quantity
+        +avg_yes_price: Price
+        +avg_no_price: Price
+        --
+        +net_inventory(): int
+        +notional_exposure(): Decimal
+    }
+
+    class PnLSnapshot {
+        +timestamp: datetime
+        +realized_pnl: Decimal
+        +unrealized_pnl: Decimal
+        +total_pnl: Decimal
+        +positions: Dict[str, Position]
+    }
+}
+
+' Relationships
+OrderBook "1" *-- "many" PriceLevel
+MarketSnapshot --> OrderBook : derived from
+Order --> OrderStatus
+Order --> Side
+Order --> OrderSide
+Fill --> Order
+Position --> Quantity
+QuoteSet --> Quote
+
+@enduml

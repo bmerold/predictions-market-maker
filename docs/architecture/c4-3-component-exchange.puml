@@ -1,0 +1,64 @@
+@startuml C4_Component_Exchange
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Component Diagram - Exchange Adapter Layer
+
+Container_Boundary(exchange_layer, "Exchange Adapter Layer") {
+
+    Component(base_interface, "ExchangeAdapter (ABC)", "Abstract base class", "Defines contract: connect(), subscribe(), place_order(), cancel_order(), get_positions()")
+
+    Component(base_ws, "WebSocketClient (ABC)", "Abstract base class", "Defines contract: connect(), subscribe(), on_message(), reconnect()")
+
+    Package "Kalshi Implementation" {
+        Component(kalshi_adapter, "KalshiAdapter", "Implements ExchangeAdapter", "Kalshi-specific implementation combining REST + WebSocket")
+
+        Component(kalshi_ws, "KalshiWebSocket", "Implements WebSocketClient", "Handles Kalshi WebSocket protocol, authentication, message parsing")
+
+        Component(kalshi_rest, "KalshiRestClient", "HTTP client", "REST API calls: orders, positions, account info. Handles auth headers, rate limiting")
+
+        Component(kalshi_models, "KalshiModels", "Pydantic models", "DTOs for Kalshi API: OrderRequest, OrderResponse, BookSnapshot, etc.")
+
+        Component(kalshi_auth, "KalshiAuth", "Auth helper", "Generates HMAC signatures for REST, WebSocket authentication")
+    }
+
+    Package "Polymarket Implementation (Future)" {
+        Component(poly_adapter, "PolymarketAdapter", "Implements ExchangeAdapter", "Polymarket-specific implementation")
+
+        Component(poly_ws, "PolymarketWebSocket", "Implements WebSocketClient", "Polymarket CLOB WebSocket")
+
+        Component(poly_rest, "PolymarketRestClient", "HTTP client", "Polymarket CLOB REST API")
+    }
+}
+
+Component(market_data, "Market Data Handler", "Consumer", "Receives normalized events")
+Component(execution, "Execution Engine", "Consumer", "Sends order commands")
+
+System_Ext(kalshi_api, "Kalshi API", "External")
+System_Ext(poly_api, "Polymarket API", "External (Future)")
+
+' Interface relationships
+Rel(kalshi_adapter, base_interface, "implements", "")
+Rel(poly_adapter, base_interface, "implements", "")
+Rel(kalshi_ws, base_ws, "implements", "")
+Rel(poly_ws, base_ws, "implements", "")
+
+' Internal Kalshi relationships
+Rel(kalshi_adapter, kalshi_ws, "uses for market data", "")
+Rel(kalshi_adapter, kalshi_rest, "uses for orders", "")
+Rel(kalshi_ws, kalshi_auth, "authenticates", "")
+Rel(kalshi_rest, kalshi_auth, "authenticates", "")
+Rel(kalshi_ws, kalshi_models, "parses into", "")
+Rel(kalshi_rest, kalshi_models, "serializes/deserializes", "")
+
+' External connections
+Rel(kalshi_ws, kalshi_api, "WebSocket", "wss://")
+Rel(kalshi_rest, kalshi_api, "REST", "HTTPS")
+Rel(poly_ws, poly_api, "WebSocket", "wss://")
+Rel(poly_rest, poly_api, "REST", "HTTPS")
+
+' Consumer relationships
+Rel(base_interface, market_data, "emits normalized events", "")
+Rel(execution, base_interface, "sends order commands", "")
+
+SHOW_LEGEND()
+@enduml

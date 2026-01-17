@@ -1,0 +1,110 @@
+@startuml C4_Component_Strategy
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Component Diagram - Pluggable Strategy & Risk Pipeline
+
+Container_Boundary(strategy_layer, "Strategy Engine (Pluggable Components)") {
+
+    Component(strategy_engine, "StrategyEngine", "Orchestrator", "Composes pluggable components to generate quotes")
+
+    Component(vol_interface, "VolatilityEstimator (ABC)", "Interface", "update(mid, ts), get_volatility() -> σ")
+    Component(vol_ewma, "EWMAVolatility", "Implementation", "σ_t = sqrt(α*(Δp)² + (1-α)*σ²)")
+    Component(vol_realized, "RealizedVolatility", "Implementation", "Rolling window std dev")
+    Component(vol_fixed, "FixedVolatility", "Implementation", "Constant σ for testing")
+
+    Component(res_interface, "ReservationPriceCalculator (ABC)", "Interface", "calculate(mid, q, σ, T) -> r")
+    Component(res_as, "AvellanedaStoikov", "Implementation", "r = s - q/(γσ²T)")
+    Component(res_linear, "LinearAdjustment", "Implementation", "r = s - k*q")
+    Component(res_simple, "SimpleMidPrice", "Implementation", "r = s")
+
+    Component(skew_interface, "SkewCalculator (ABC)", "Interface", "calculate(q, Q_max, σ) -> skew")
+    Component(skew_linear, "LinearSkew", "Implementation", "skew = k*(q/Q_max)")
+    Component(skew_exp, "ExponentialSkew", "Implementation", "skew = k*(q/Q_max)²")
+    Component(skew_adaptive, "AdaptiveSkew", "Implementation", "skew = k*(q/Q_max)*σ")
+
+    Component(spread_interface, "SpreadCalculator (ABC)", "Interface", "calculate(σ, q, T) -> δ")
+    Component(spread_fixed, "FixedSpread", "Implementation", "δ = base/2")
+    Component(spread_vol, "VolatilitySpread", "Implementation", "δ = base + k*σ")
+    Component(spread_inv, "InventorySpread", "Implementation", "δ = base*(1+|q|/Q)")
+
+    Component(sizer_interface, "QuoteSizer (ABC)", "Interface", "calculate(q, Q_max, base) -> (bid_sz, ask_sz)")
+    Component(sizer_asym, "AsymmetricSizer", "Implementation", "bid=base*(1-q/Q), ask=base*(1+q/Q)")
+    Component(sizer_linear, "LinearSizer", "Implementation", "sz = base*(1-|q|/Q)")
+    Component(sizer_fixed, "FixedSizer", "Implementation", "sz = base")
+}
+
+Container_Boundary(risk_layer, "Risk Manager (Pluggable Rules)") {
+
+    Component(risk_manager, "RiskManager", "Orchestrator", "Executes rules in order, aggregates decisions")
+
+    Component(rule_interface, "RiskRule (ABC)", "Interface", "evaluate(quotes, context) -> RiskDecision")
+
+    Component(rule_inventory, "MaxInventoryRule", "Position Rule", "Block if |q| > limit")
+    Component(rule_order_size, "MaxOrderSizeRule", "Position Rule", "Modify/block large orders")
+    Component(rule_settlement, "SettlementCutoffRule", "Time Rule", "Block in final N minutes")
+    Component(rule_hourly_pnl, "HourlyLossLimitRule", "PnL Rule", "Kill switch on hourly loss")
+    Component(rule_daily_pnl, "DailyLossLimitRule", "PnL Rule", "Kill switch on daily loss")
+    Component(rule_high_vol, "HighVolatilityRule", "Market Rule", "Widen spread in volatility")
+    Component(rule_stale, "StaleDataRule", "Market Rule", "Block on stale data")
+    Component(rule_custom, "CustomRule", "User-defined", "Loadable from Python module")
+
+    Component(kill_switch, "KillSwitch", "Control", "Emergency stop: cancels all, blocks new")
+}
+
+Container_Boundary(execution_layer, "Execution Engine") {
+    Component(exec_base, "ExecutionEngine (ABC)", "Interface", "update_quotes(approved), cancel_all()")
+    Component(paper_exec, "PaperExecutionEngine", "Implementation", "Simulates fills")
+    Component(live_exec, "LiveExecutionEngine", "Implementation", "Real orders + rate limiting")
+}
+
+' Interface implementations
+Rel(vol_interface, vol_ewma, "implemented by")
+Rel(vol_interface, vol_realized, "implemented by")
+Rel(vol_interface, vol_fixed, "implemented by")
+
+Rel(res_interface, res_as, "implemented by")
+Rel(res_interface, res_linear, "implemented by")
+Rel(res_interface, res_simple, "implemented by")
+
+Rel(skew_interface, skew_linear, "implemented by")
+Rel(skew_interface, skew_exp, "implemented by")
+Rel(skew_interface, skew_adaptive, "implemented by")
+
+Rel(spread_interface, spread_fixed, "implemented by")
+Rel(spread_interface, spread_vol, "implemented by")
+Rel(spread_interface, spread_inv, "implemented by")
+
+Rel(sizer_interface, sizer_asym, "implemented by")
+Rel(sizer_interface, sizer_linear, "implemented by")
+Rel(sizer_interface, sizer_fixed, "implemented by")
+
+' Strategy composition
+Rel(strategy_engine, vol_interface, "uses")
+Rel(strategy_engine, res_interface, "uses")
+Rel(strategy_engine, skew_interface, "uses")
+Rel(strategy_engine, spread_interface, "uses")
+Rel(strategy_engine, sizer_interface, "uses")
+
+' Risk rule implementations
+Rel(rule_interface, rule_inventory, "implemented by")
+Rel(rule_interface, rule_order_size, "implemented by")
+Rel(rule_interface, rule_settlement, "implemented by")
+Rel(rule_interface, rule_hourly_pnl, "implemented by")
+Rel(rule_interface, rule_daily_pnl, "implemented by")
+Rel(rule_interface, rule_high_vol, "implemented by")
+Rel(rule_interface, rule_stale, "implemented by")
+Rel(rule_interface, rule_custom, "implemented by")
+
+' Risk manager flow
+Rel(risk_manager, rule_interface, "executes rules via")
+Rel(rule_hourly_pnl, kill_switch, "triggers")
+Rel(rule_daily_pnl, kill_switch, "triggers")
+
+' Pipeline flow
+Rel(strategy_engine, risk_manager, "proposed quotes", "QuoteSet")
+Rel(risk_manager, exec_base, "approved quotes", "QuoteSet")
+Rel(exec_base, paper_exec, "implemented by")
+Rel(exec_base, live_exec, "implemented by")
+
+SHOW_LEGEND()
+@enduml

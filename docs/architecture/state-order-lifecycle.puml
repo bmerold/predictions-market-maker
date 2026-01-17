@@ -1,0 +1,44 @@
+@startuml State_Order_Lifecycle
+
+title Order Lifecycle State Machine
+
+[*] --> Pending : create_order()
+
+Pending --> Open : exchange confirms\norder accepted
+Pending --> Rejected : exchange rejects\n(invalid price, insufficient funds)
+
+Open --> PartiallyFilled : partial fill received
+Open --> Filled : full fill received
+Open --> Cancelling : cancel_order()
+Open --> Open : amend_order()\n(price/size change)
+
+PartiallyFilled --> PartiallyFilled : another partial fill
+PartiallyFilled --> Filled : remaining qty filled
+PartiallyFilled --> Cancelling : cancel_order()
+
+Cancelling --> Cancelled : cancel confirmed
+Cancelling --> Filled : filled before cancel processed
+
+Filled --> [*]
+Cancelled --> [*]
+Rejected --> [*]
+
+note right of Pending
+  Order created locally,
+  sent to exchange,
+  awaiting confirmation
+end note
+
+note right of Open
+  Resting on order book,
+  visible in market,
+  can be filled or cancelled
+end note
+
+note right of Cancelling
+  Cancel request sent,
+  awaiting confirmation,
+  may still fill
+end note
+
+@enduml

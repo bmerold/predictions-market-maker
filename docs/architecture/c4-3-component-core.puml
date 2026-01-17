@@ -1,0 +1,60 @@
+@startuml C4_Component_Core
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Component Diagram - Trading Core
+
+Container_Boundary(core, "Trading Core") {
+
+    Component(controller, "Main Controller", "Python class", "Orchestrates the trading loop, coordinates all components, handles lifecycle")
+
+    Component(exchange_adapter, "Exchange Adapter", "Abstract interface + Kalshi impl", "Abstracts exchange-specific APIs behind common interface")
+
+    Component(market_data, "Market Data Handler", "Python class", "Maintains live order book state, calculates mid price, spread")
+
+    Component(volatility, "Volatility Estimator", "Python class", "Calculates EWMA volatility from price changes")
+
+    Component(strategy, "Strategy Engine", "A-S implementation", "Computes reservation price, generates bid/ask quotes using Avellaneda-Stoikov model")
+
+    Component(risk, "Risk Manager", "Python class", "Enforces position limits, time-based cutoffs, kill switch, filters strategy output")
+
+    Component(execution, "Execution Engine", "Paper/Live modes", "Manages order lifecycle: diff-based updates, rate limiting, fill simulation (paper mode)")
+
+    Component(state, "State Store", "Python class", "Canonical source of positions, inventory, realized/unrealized PnL")
+}
+
+System_Ext(kalshi_ws, "Kalshi WebSocket", "Market data feed")
+System_Ext(kalshi_rest, "Kalshi REST API", "Order operations")
+ContainerDb(database, "Database", "Persistence")
+
+' Data flow - market data in
+Rel(kalshi_ws, exchange_adapter, "Order book updates, trades", "WebSocket")
+Rel(exchange_adapter, market_data, "Normalized book updates", "Events")
+Rel(market_data, volatility, "Price changes", "Events")
+
+' Strategy computation
+Rel(market_data, strategy, "Market snapshot (mid, spread, book)", "Query")
+Rel(volatility, strategy, "Current volatility estimate", "Query")
+Rel(state, strategy, "Current inventory", "Query")
+
+' Risk filtering
+Rel(strategy, risk, "Proposed quotes", "Commands")
+Rel(state, risk, "Position state for limit checks", "Query")
+
+' Execution
+Rel(risk, execution, "Approved quotes", "Commands")
+Rel(execution, exchange_adapter, "Place/cancel orders", "Commands")
+Rel(exchange_adapter, kalshi_rest, "Order requests", "REST API")
+
+' State updates
+Rel(execution, state, "Fill events", "Events")
+Rel(state, database, "Persist snapshots", "Write")
+
+' Controller orchestration
+Rel(controller, exchange_adapter, "Lifecycle management", "Control")
+Rel(controller, market_data, "Lifecycle management", "Control")
+Rel(controller, strategy, "Trigger quote generation", "Control")
+Rel(controller, execution, "Lifecycle management", "Control")
+Rel(controller, state, "Initialization, shutdown", "Control")
+
+SHOW_LEGEND()
+@enduml

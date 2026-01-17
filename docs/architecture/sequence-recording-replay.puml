@@ -1,0 +1,113 @@
+@startuml sequence-recording-replay
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Sequence.puml
+
+title Recording and Replay Modes
+
+== Recording Mode (Live/Paper Trading) ==
+
+participant "Kalshi\nWebSocket" as WS
+participant "Exchange\nAdapter" as ADAPTER
+participant "Event\nRecorder" as RECORDER
+participant "Trading\nSystem" as SYSTEM
+database "Session\nFile" as FILE
+
+WS -> ADAPTER: book_update
+ADAPTER -> RECORDER: tee(book_delta)
+RECORDER -> FILE: write(event)
+ADAPTER -> SYSTEM: on_book_update()
+SYSTEM -> RECORDER: tee(quote_generated)
+RECORDER -> FILE: write(event)
+SYSTEM -> ADAPTER: place_order()
+ADAPTER -> RECORDER: tee(order_sent)
+RECORDER -> FILE: write(event)
+ADAPTER -> WS: REST API
+WS --> ADAPTER: order_ack
+ADAPTER -> RECORDER: tee(order_ack)
+RECORDER -> FILE: write(event)
+ADAPTER --> SYSTEM: on_order_ack()
+
+note right of FILE
+  Session file contains:
+  - All market data events
+  - All strategy decisions
+  - All order events
+  - Periodic state snapshots
+end note
+
+== Deterministic Replay Mode ==
+
+database "Session\nFile" as FILE2
+participant "Replay\nExchange" as REPLAY
+participant "Trading\nSystem" as SYSTEM2
+participant "Replay\nValidator" as VALIDATOR
+
+FILE2 -> REPLAY: read(events)
+REPLAY -> SYSTEM2: on_book_update()\n[from recording]
+SYSTEM2 -> SYSTEM2: calculate_quotes()
+SYSTEM2 -> REPLAY: place_order()
+REPLAY -> VALIDATOR: compare(expected, actual)
+
+alt Orders Match
+    VALIDATOR -> VALIDATOR: continue
+else Orders Differ
+    VALIDATOR -> VALIDATOR: log_divergence()
+    VALIDATOR --> SYSTEM2: DIVERGENCE_ERROR
+end
+
+REPLAY -> SYSTEM2: on_order_ack()\n[from recording]
+REPLAY -> SYSTEM2: on_fill()\n[from recording]
+
+note right of VALIDATOR
+  Validates:
+  - Same quotes generated
+  - Same orders placed
+  - Same state at checkpoints
+end note
+
+== Backtest Mode ==
+
+database "Session\nFile" as FILE3
+participant "Backtest\nEngine" as BACKTEST
+participant "Strategy\nEngine" as STRATEGY
+participant "Fill\nSimulator" as FILLSIM
+participant "Metrics\nCollector" as METRICS
+
+FILE3 -> BACKTEST: read(market_events)
+BACKTEST -> STRATEGY: on_book_update()
+STRATEGY -> STRATEGY: calculate_quotes()
+STRATEGY --> BACKTEST: quotes
+
+BACKTEST -> FILLSIM: check_fills(quotes, book_state)
+
+alt Quote Crosses Book
+    FILLSIM -> FILLSIM: simulate_fill()
+    FILLSIM -> METRICS: record_fill()
+    FILLSIM --> STRATEGY: on_fill(simulated)
+else No Cross
+    FILLSIM -> FILLSIM: no fill
+end
+
+BACKTEST -> METRICS: record_quote()
+
+... After all events processed ...
+
+METRICS -> METRICS: calculate_statistics()
+METRICS --> BACKTEST: BacktestReport
+
+note right of FILLSIM
+  Fill modes:
+  - optimistic: fill if price crosses
+  - pessimistic: only top of book
+  - probabilistic: random by queue
+end note
+
+note right of METRICS
+  Report includes:
+  - Net PnL
+  - Win rate
+  - Sharpe ratio
+  - Max drawdown
+  - Fill rate
+end note
+
+@enduml

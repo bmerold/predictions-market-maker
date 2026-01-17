@@ -1,0 +1,103 @@
+@startuml Sequence_Trading_Loop
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Sequence.puml
+
+title Trading Loop Sequence - Market Data to Quote Update
+
+participant "Kalshi\nWebSocket" as KWS
+participant "Exchange\nAdapter" as EA
+participant "Market Data\nHandler" as MDH
+participant "Volatility\nEstimator" as VOL
+participant "State\nStore" as STATE
+participant "Strategy\nEngine" as STRAT
+participant "Risk\nManager" as RISK
+participant "Execution\nEngine" as EXEC
+participant "Kalshi\nREST" as KREST
+
+== Market Data Update ==
+
+KWS -> EA: orderbook_delta message
+activate EA
+EA -> EA: parse & normalize
+EA -> MDH: BookUpdate event
+deactivate EA
+
+activate MDH
+MDH -> MDH: update internal book state
+MDH -> MDH: calculate new mid_price, spread
+MDH -> VOL: price_change event
+deactivate MDH
+
+activate VOL
+VOL -> VOL: update EWMA volatility
+deactivate VOL
+
+== Quote Generation (triggered by significant change or timer) ==
+
+-> STRAT: trigger_quote_generation()
+activate STRAT
+
+STRAT -> MDH: get_market_snapshot()
+MDH --> STRAT: MarketSnapshot(mid, spread, best_bid, best_ask)
+
+STRAT -> VOL: get_volatility()
+VOL --> STRAT: current_sigma
+
+STRAT -> STATE: get_inventory()
+STATE --> STRAT: current_position
+
+STRAT -> STRAT: calculate reservation_price\nr = mid - q/(γ * σ² * T)
+STRAT -> STRAT: calculate bid/ask with skew\nbid = r - δ - skew\nask = r + δ - skew
+
+STRAT -> RISK: propose_quotes(QuoteSet)
+deactivate STRAT
+
+activate RISK
+RISK -> STATE: get_position_state()
+STATE --> RISK: PositionState
+
+RISK -> RISK: check position_limits
+RISK -> RISK: check time_rules (not in last 3 min)
+RISK -> RISK: check pnl_limits
+
+alt Quotes approved
+    RISK -> EXEC: update_quotes(approved_quotes)
+else Quotes rejected (limit breach)
+    RISK --> STRAT: RejectionReason
+else Kill switch triggered
+    RISK -> EXEC: cancel_all()
+    RISK -> RISK: block_new_orders()
+end
+deactivate RISK
+
+activate EXEC
+EXEC -> EXEC: diff new quotes vs live orders
+alt Price/size changed materially
+    EXEC -> EXEC: rate_limiter.acquire()
+    EXEC -> KREST: cancel_order(old_order_id)
+    KREST --> EXEC: cancel_confirmed
+    EXEC -> KREST: create_order(new_quote)
+    KREST --> EXEC: order_created(order_id)
+    EXEC -> EXEC: update order_tracker
+else No material change
+    EXEC -> EXEC: skip update
+end
+deactivate EXEC
+
+== Fill Event ==
+
+KWS -> EA: fill message
+activate EA
+EA -> EXEC: FillEvent
+deactivate EA
+
+activate EXEC
+EXEC -> STATE: record_fill(fill)
+deactivate EXEC
+
+activate STATE
+STATE -> STATE: update position
+STATE -> STATE: update realized_pnl
+STATE -> STATE: persist to database
+deactivate STATE
+
+@enduml

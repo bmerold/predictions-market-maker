@@ -1,0 +1,18 @@
+@startuml C4_Context
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+title System Context Diagram - Predictions Market Maker
+
+Person(trader, "Trader", "Operates and monitors the market making bot")
+
+System(market_maker, "Market Maker Bot", "Automated market making system that provides liquidity on prediction markets using Avellaneda-Stoikov strategy")
+
+System_Ext(kalshi, "Kalshi Exchange", "Regulated prediction market exchange offering binary event contracts")
+System_Ext(polymarket, "Polymarket", "Decentralized prediction market on Polygon (future)")
+
+Rel(trader, market_maker, "Configures, monitors, controls", "Web UI / Console")
+Rel(market_maker, kalshi, "Subscribes to market data, places orders", "REST API / WebSocket")
+Rel_R(market_maker, polymarket, "Future: market data, orders", "REST API / WebSocket")
+
+SHOW_LEGEND()
+@enduml

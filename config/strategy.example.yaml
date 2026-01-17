@@ -1,0 +1,314 @@
+# Strategy Configuration Example
+# Copy to strategy.yaml and customize
+
+# =============================================================================
+# STRATEGY COMPONENTS
+# =============================================================================
+# Each component can be swapped independently. See FR-410 series for details.
+
+strategy:
+  # ---------------------------------------------------------------------------
+  # Volatility Estimator (FR-411)
+  # Options: ewma, realized, fixed
+  # ---------------------------------------------------------------------------
+  components:
+    volatility:
+      type: ewma
+      params:
+        alpha: 0.94              # Decay factor (higher = more responsive)
+
+    # Alternative: Realized volatility
+    # volatility:
+    #   type: realized
+    #   params:
+    #     window_seconds: 300    # 5-minute rolling window
+
+    # Alternative: Fixed (for testing/backtesting)
+    # volatility:
+    #   type: fixed
+    #   params:
+    #     value: 0.05
+
+    # ---------------------------------------------------------------------------
+    # Reservation Price Calculator (FR-412)
+    # Options: avellaneda_stoikov, linear, simple_mid
+    # ---------------------------------------------------------------------------
+    reservation_price:
+      type: avellaneda_stoikov
+      params:
+        gamma: 0.1               # Risk aversion (higher = more conservative)
+
+    # Alternative: Linear adjustment
+    # reservation_price:
+    #   type: linear
+    #   params:
+    #     k: 0.0001              # Price shift per contract
+
+    # Alternative: Simple mid (no inventory adjustment)
+    # reservation_price:
+    #   type: simple_mid
+
+    # ---------------------------------------------------------------------------
+    # Skew Calculator (FR-413)
+    # Options: linear, exponential, adaptive, none
+    # ---------------------------------------------------------------------------
+    skew:
+      type: linear
+      params:
+        intensity: 0.01          # k parameter
+
+    # Alternative: Exponential (aggressive near limits)
+    # skew:
+    #   type: exponential
+    #   params:
+    #     intensity: 0.01
+
+    # Alternative: Adaptive (scales with volatility)
+    # skew:
+    #   type: adaptive
+    #   params:
+    #     intensity: 0.01
+    #     vol_multiplier: 1.0
+
+    # Alternative: No skew (for A/B testing)
+    # skew:
+    #   type: none
+
+    # ---------------------------------------------------------------------------
+    # Spread Calculator (FR-414)
+    # Options: fixed, volatility, inventory, time_decay
+    # ---------------------------------------------------------------------------
+    spread:
+      type: fixed
+      params:
+        base_spread: 0.02        # Total spread width
+
+    # Alternative: Volatility-adjusted spread
+    # spread:
+    #   type: volatility
+    #   params:
+    #     base_spread: 0.02
+    #     vol_multiplier: 0.5    # Additional spread per unit volatility
+
+    # Alternative: Inventory-adjusted spread
+    # spread:
+    #   type: inventory
+    #   params:
+    #     base_spread: 0.02
+    #     inventory_multiplier: 0.5
+
+    # Alternative: Time-decay spread (widens near settlement)
+    # spread:
+    #   type: time_decay
+    #   params:
+    #     base_spread: 0.02
+    #     min_time_hours: 0.1    # Floor for time factor
+
+    # ---------------------------------------------------------------------------
+    # Quote Sizer (FR-415)
+    # Options: asymmetric, linear, fixed
+    # ---------------------------------------------------------------------------
+    sizer:
+      type: asymmetric
+      params:
+        base_size: 100           # Base contracts per quote
+
+    # Alternative: Linear (reduces both sides equally)
+    # sizer:
+    #   type: linear
+    #   params:
+    #     base_size: 100
+
+    # Alternative: Fixed (constant size)
+    # sizer:
+    #   type: fixed
+    #   params:
+    #     base_size: 100
+
+  # ---------------------------------------------------------------------------
+  # Global Strategy Parameters
+  # ---------------------------------------------------------------------------
+  max_inventory: 1000            # Q_max: Maximum net position
+  min_spread: 0.01               # Minimum spread regardless of calculator
+  price_bounds:
+    min: 0.01
+    max: 0.99
+
+# =============================================================================
+# STRATEGY PRESETS
+# =============================================================================
+# Uncomment to use a preset instead of configuring each component
+
+# strategy:
+#   preset: conservative
+#
+# Available presets:
+#   - conservative: Wide spreads, strong skew, small sizes
+#   - moderate:     Balanced settings (default component config)
+#   - aggressive:   Tight spreads, light skew, larger sizes
+#   - baseline:     Fixed spread, no skew (for comparison)
+
+# =============================================================================
+# RISK RULES
+# =============================================================================
+# See FR-510 series for details on pluggable risk rules.
+
+risk:
+  # Rule execution order (evaluated in this sequence)
+  rule_order:
+    - stale_data               # Block on stale market data
+    - settlement_cutoff        # Block near settlement
+    - daily_loss_limit         # Kill switch on daily loss
+    - hourly_loss_limit        # Kill switch on hourly loss
+    - max_inventory            # Block at inventory limits
+    - max_order_size           # Modify/block large orders
+    - high_volatility          # Widen spread in volatility
+
+  # Individual rule configuration
+  rules:
+    stale_data:
+      enabled: true
+      max_age_seconds: 5
+
+    settlement_cutoff:
+      enabled: true
+      cutoff_minutes: 3
+
+    daily_loss_limit:
+      enabled: true
+      limit: 100.00            # USD
+      action: kill_switch
+
+    hourly_loss_limit:
+      enabled: true
+      limit: 50.00             # USD
+      action: kill_switch
+
+    max_inventory:
+      enabled: true
+      limit: 1000              # Contracts
+
+    max_order_size:
+      enabled: true
+      limit: 500               # Contracts
+      action: modify           # Reduce size instead of blocking
+
+    high_volatility:
+      enabled: true
+      threshold_multiplier: 2.0  # Trigger at 2x normal volatility
+      action: modify
+      spread_multiplier: 1.5     # Widen spread by 50%
+
+    # Additional rules (disabled by default)
+    max_notional:
+      enabled: false
+      limit: 500.00            # USD total exposure
+
+    wide_spread:
+      enabled: false
+      threshold_multiplier: 3.0  # Block if market spread > 3x normal
+
+  # Kill switch settings
+  kill_switch:
+    enabled: true
+    require_manual_reset: true
+
+  # Custom rules (load from Python modules)
+  custom_rules: []
+  # custom_rules:
+  #   - module: my_rules.MyCustomRule
+  #     enabled: true
+  #     params:
+  #       threshold: 0.8
+
+# =============================================================================
+# RECORDING
+# =============================================================================
+# See FR-900 series for session recording and replay.
+
+recording:
+  enabled: true
+  output_dir: ./data/sessions
+
+  events:
+    book_snapshots: true
+    book_deltas: true
+    trades: true
+    quotes: true
+    orders: true
+    fills: true
+    state: true
+
+  snapshot_interval_seconds: 60
+  compression: gzip
+  retention_days: 30
+  max_storage_mb: 5000
+  async_write: true
+  buffer_size: 1000
+
+# =============================================================================
+# HOT RELOAD / HOT SWAP
+# =============================================================================
+# See FR-1000 series for hot configuration and component swap.
+
+hot_reload:
+  enabled: true
+
+  # File watching - auto-reload when config changes
+  file_watch: true
+  watch_paths:
+    - ./config/strategy.yaml
+    - ./config/risk.yaml
+
+  # Safety settings
+  drain_timeout_seconds: 5       # Wait for pending orders before swap
+  validation_timeout_seconds: 1  # Max time to validate new config
+  max_changes_per_minute: 10     # Prevent rapid config flapping
+
+  # Confirmation mode (if true, changes are queued for approval)
+  require_confirmation: false
+
+  # Version history
+  history:
+    enabled: true
+    max_versions: 20
+    storage_dir: ./data/config_history
+
+  # Notifications
+  notifications:
+    log: true                    # Always log changes
+    session_recording: true      # Record in session for replay
+    webhook:
+      enabled: false
+      url: https://your-webhook-endpoint.com/config-change
+      retry_count: 3
+    websocket:
+      enabled: false             # Real-time notifications to connected clients
+
+# =============================================================================
+# API SERVER
+# =============================================================================
+# Configuration management API (FR-1004)
+
+api:
+  enabled: true
+  host: 127.0.0.1
+  port: 8080
+
+  # Authentication
+  auth:
+    enabled: true
+    # API key for config changes (set via environment variable)
+    api_key_env: MM_API_KEY
+
+  # Endpoints
+  endpoints:
+    config: true                 # GET/PUT /config/*
+    health: true                 # GET /health
+    metrics: true                # GET /metrics
+    control: true                # POST /control/* (pause, resume, kill)
+
+  # Rate limiting
+  rate_limit:
+    config_changes_per_minute: 10
+    general_requests_per_second: 100

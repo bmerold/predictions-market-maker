@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  market-maker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: market-maker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - MM_MODE=${MM_MODE:-paper}
+      - MM_LOG_LEVEL=${MM_LOG_LEVEL:-INFO}
+      - MM_DATABASE_PATH=/app/data/mm.db
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    # Health check hits internal endpoint (implement later)
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+
+volumes:
+  data:

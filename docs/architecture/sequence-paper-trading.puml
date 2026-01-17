@@ -1,0 +1,92 @@
+@startuml Sequence_Paper_Trading
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Sequence.puml
+
+title Paper Trading Sequence - Simulated Fill Logic
+
+participant "Kalshi\nWebSocket" as KWS
+participant "Exchange\nAdapter" as EA
+participant "Market Data\nHandler" as MDH
+participant "Strategy\nEngine" as STRAT
+participant "Risk\nManager" as RISK
+participant "Paper Execution\nEngine" as PAPER
+participant "Fill\nSimulator" as SIM
+participant "State\nStore" as STATE
+
+== Setup: Strategy generates quotes ==
+
+STRAT -> RISK: propose_quotes(bid=0.44, ask=0.56, size=100)
+RISK -> PAPER: update_quotes(approved_quotes)
+
+activate PAPER
+PAPER -> PAPER: store virtual_orders\n[bid: 0.44 x 100, ask: 0.56 x 100]
+deactivate PAPER
+
+== Market moves: Check for simulated fills ==
+
+KWS -> EA: orderbook_delta (best_ask now 0.43)
+EA -> MDH: BookUpdate
+activate MDH
+MDH -> MDH: update book\nbest_ask = 0.43
+MDH -> PAPER: market_update(snapshot)
+deactivate MDH
+
+activate PAPER
+PAPER -> SIM: check_fills(virtual_orders, market_snapshot)
+activate SIM
+
+SIM -> SIM: Our bid (0.44) >= market best_ask (0.43)?
+note right: YES - we would get filled\nbecause our bid crosses the market
+
+SIM -> SIM: Calculate fill:\nprice = 0.43 (at best_ask)\nsize = min(our_size, available_size)
+
+SIM --> PAPER: SimulatedFill(side=BUY, price=0.43, size=100)
+deactivate SIM
+
+PAPER -> STATE: record_fill(simulated_fill)
+activate STATE
+STATE -> STATE: position += 100 (long YES)
+STATE -> STATE: cash -= 0.43 * 100 = $43
+STATE -> STATE: log fill for analysis
+deactivate STATE
+
+PAPER -> PAPER: remove filled bid from virtual_orders
+PAPER -> STRAT: notify_fill(fill) [triggers re-quote]
+deactivate PAPER
+
+== Strategy re-quotes with new inventory ==
+
+activate STRAT
+STRAT -> STATE: get_inventory()
+STATE --> STRAT: position = +100 (long)
+
+STRAT -> STRAT: inventory skew calculation\nskew = k * (100 / 1000) = 0.01\nbid = r - δ - skew (lower)\nask = r + δ - skew (lower)
+
+note right: Both quotes shift DOWN\nto encourage selling (reduce long position)
+
+STRAT -> RISK: propose_quotes(bid=0.43, ask=0.55, size=100)
+RISK -> PAPER: update_quotes(...)
+deactivate STRAT
+
+== Alternative: Market moves away ==
+
+KWS -> EA: orderbook_delta (best_ask now 0.50)
+EA -> MDH: BookUpdate
+activate MDH
+MDH -> MDH: update book\nbest_ask = 0.50
+MDH -> PAPER: market_update(snapshot)
+deactivate MDH
+
+activate PAPER
+PAPER -> SIM: check_fills(virtual_orders, market_snapshot)
+activate SIM
+
+SIM -> SIM: Our bid (0.44) >= market best_ask (0.50)?
+note right: NO - bid doesn't cross\nNo fill simulated
+
+SIM --> PAPER: no fills
+deactivate SIM
+deactivate PAPER
+
+note over PAPER: Virtual orders remain resting\nWaiting for market to move to us
+
+@enduml
