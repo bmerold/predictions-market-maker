@@ -122,6 +122,10 @@ class TradingController:
         self._recent_fills_for_adverse: dict[str, list[tuple[float, Decimal, str, Decimal]]] = {}
         self._adverse_selection_score: dict[str, float] = {}  # -1 to 1, negative = we're losing
         self._adverse_lookback_fills = 10  # Number of fills to consider
+        self._adverse_score_last_decay: dict[str, float] = {}  # Last decay timestamp per market
+        self._adverse_decay_rate = 0.05  # Decay 0.05 per second toward 0
+        self._adverse_decay_interval = 1.0  # Decay every 1 second
+        self._adverse_unwind_mode: dict[str, str] = {}  # market_id -> "long" or "short"
 
         # Dynamic spread multiplier based on market conditions
         self._spread_multiplier: dict[str, Decimal] = {}  # 1.0 = normal, 2.0 = double spread
@@ -737,25 +741,55 @@ class TradingController:
                     logger.debug("Quotes skipped: inventory adjustment")
                     return
 
-            # Check for severe adverse selection - stop quoting if we're getting picked off badly
+            # Decay adverse selection score over time (allows recovery)
+            self._decay_adverse_selection_score(market_id)
+
+            # Check for severe adverse selection
+            # Instead of stopping entirely, only quote the inventory-reducing side
             adverse_score = self._adverse_selection_score.get(market_id, 0.0)
+            inventory = position.net_inventory()
+
             if adverse_score < -0.5:  # Losing > 50% of fills to adverse selection
-                logger.warning(
-                    f"ADVERSE SELECTION STOP: Score {adverse_score:.2f} < -0.5, "
-                    f"stopping quotes for {market_id} (we're being picked off)"
-                )
-                return
+                if inventory > 0:
+                    # Long inventory - only quote asks to try to unwind
+                    logger.info(
+                        f"ADVERSE SELECTION UNWIND: Score {adverse_score:.2f}, "
+                        f"long {inventory} - quoting asks only to reduce position"
+                    )
+                    self._adverse_unwind_mode[market_id] = "long"
+                elif inventory < 0:
+                    # Short inventory - only quote bids to try to unwind
+                    logger.info(
+                        f"ADVERSE SELECTION UNWIND: Score {adverse_score:.2f}, "
+                        f"short {inventory} - quoting bids only to reduce position"
+                    )
+                    self._adverse_unwind_mode[market_id] = "short"
+                else:
+                    # No inventory - stop quoting entirely
+                    logger.warning(
+                        f"ADVERSE SELECTION STOP: Score {adverse_score:.2f} < -0.5, "
+                        f"no inventory to unwind - stopping quotes for {market_id}"
+                    )
+                    return
+            else:
+                # Clear unwind mode if score recovered
+                if market_id in self._adverse_unwind_mode:
+                    del self._adverse_unwind_mode[market_id]
+                    logger.info(f"Adverse selection recovered for {market_id}, resuming normal quoting")
 
             # Check unrealized loss limit - stop if position is losing too much
             MAX_UNREALIZED_LOSS = Decimal("2.00")  # $2 max unrealized loss per market
             if self._state and mid_price:
-                unrealized = self._state.calculate_unrealized_pnl(market_id, mid_price.value)
-                if unrealized < -MAX_UNREALIZED_LOSS:
-                    logger.warning(
-                        f"UNREALIZED LOSS STOP: Position loss ${-unrealized:.2f} > ${MAX_UNREALIZED_LOSS}, "
-                        f"stopping quotes for {market_id}"
-                    )
-                    return
+                try:
+                    unrealized = self._state.calculate_unrealized_pnl(market_id, mid_price)
+                    if unrealized < -MAX_UNREALIZED_LOSS:
+                        logger.warning(
+                            f"UNREALIZED LOSS STOP: Position loss ${-unrealized:.2f} > ${MAX_UNREALIZED_LOSS}, "
+                            f"stopping quotes for {market_id}"
+                        )
+                        return
+                except (AttributeError, TypeError) as e:
+                    logger.debug(f"Could not calculate unrealized PnL: {e}")
 
             # Check with risk manager (after inventory adjustment)
             if quotes and self._risk_manager and self._state:
@@ -842,25 +876,55 @@ class TradingController:
                     logger.info(f"Quotes skipped: inventory adjustment")
                     continue
 
-                # Check for severe adverse selection - stop quoting if we're getting picked off badly
+                # Decay adverse selection score over time (allows recovery)
+                self._decay_adverse_selection_score(market_id)
+
+                # Check for severe adverse selection
+                # Instead of stopping entirely, only quote the inventory-reducing side
                 adverse_score = self._adverse_selection_score.get(market_id, 0.0)
+                inventory = position.net_inventory()
+
                 if adverse_score < -0.5:  # Losing > 50% of fills to adverse selection
-                    logger.warning(
-                        f"ADVERSE SELECTION STOP: Score {adverse_score:.2f} < -0.5, "
-                        f"stopping quotes for {market_id} (we're being picked off)"
-                    )
-                    continue
+                    if inventory > 0:
+                        # Long inventory - only quote asks to try to unwind
+                        logger.info(
+                            f"ADVERSE SELECTION UNWIND: Score {adverse_score:.2f}, "
+                            f"long {inventory} - quoting asks only to reduce position"
+                        )
+                        self._adverse_unwind_mode[market_id] = "long"
+                    elif inventory < 0:
+                        # Short inventory - only quote bids to try to unwind
+                        logger.info(
+                            f"ADVERSE SELECTION UNWIND: Score {adverse_score:.2f}, "
+                            f"short {inventory} - quoting bids only to reduce position"
+                        )
+                        self._adverse_unwind_mode[market_id] = "short"
+                    else:
+                        # No inventory - stop quoting entirely
+                        logger.warning(
+                            f"ADVERSE SELECTION STOP: Score {adverse_score:.2f} < -0.5, "
+                            f"no inventory to unwind - stopping quotes for {market_id}"
+                        )
+                        continue
+                else:
+                    # Clear unwind mode if score recovered
+                    if market_id in self._adverse_unwind_mode:
+                        del self._adverse_unwind_mode[market_id]
+                        logger.info(f"Adverse selection recovered for {market_id}, resuming normal quoting")
 
                 # Check unrealized loss limit - stop if position is losing too much
                 MAX_UNREALIZED_LOSS = Decimal("2.00")  # $2 max unrealized loss per market
                 if self._state and mid_price:
-                    unrealized = self._state.calculate_unrealized_pnl(market_id, mid_price.value)
-                    if unrealized < -MAX_UNREALIZED_LOSS:
-                        logger.warning(
-                            f"UNREALIZED LOSS STOP: Position loss ${-unrealized:.2f} > ${MAX_UNREALIZED_LOSS}, "
-                            f"stopping quotes for {market_id}"
-                        )
-                        continue
+                    try:
+                        unrealized = self._state.calculate_unrealized_pnl(market_id, mid_price)
+                        if unrealized < -MAX_UNREALIZED_LOSS:
+                            logger.warning(
+                                f"UNREALIZED LOSS STOP: Position loss ${-unrealized:.2f} > ${MAX_UNREALIZED_LOSS}, "
+                                f"stopping quotes for {market_id}"
+                            )
+                            continue
+                    except (AttributeError, TypeError) as e:
+                        logger.debug(f"Could not calculate unrealized PnL: {e}")
 
                 # Check with risk manager (after inventory adjustment)
                 if self._risk_manager and self._state:
@@ -1015,6 +1079,44 @@ class TradingController:
         else:
             # Score: -1 (all bad) to +1 (all good)
             self._adverse_selection_score[market_id] = (good_fills - bad_fills) / total
+
+    def _decay_adverse_selection_score(self, market_id: str) -> None:
+        """Decay adverse selection score toward 0 over time.
+
+        This allows the bot to resume quoting after a cooldown period,
+        rather than being stuck with a bad score forever.
+
+        Score decays by _adverse_decay_rate per second toward 0.
+        """
+        now = time.time()
+        last_decay = self._adverse_score_last_decay.get(market_id, now)
+        elapsed = now - last_decay
+
+        if elapsed < self._adverse_decay_interval:
+            return  # Too soon to decay
+
+        current_score = self._adverse_selection_score.get(market_id, 0.0)
+        if current_score == 0.0:
+            self._adverse_score_last_decay[market_id] = now
+            return  # Already at neutral
+
+        # Calculate decay amount based on elapsed time
+        decay_amount = self._adverse_decay_rate * elapsed
+
+        if current_score < 0:
+            # Negative score - decay toward 0 (add)
+            new_score = min(0.0, current_score + decay_amount)
+            if new_score != current_score:
+                logger.debug(
+                    f"Adverse score decay for {market_id}: {current_score:.2f} -> {new_score:.2f} "
+                    f"(+{decay_amount:.2f} over {elapsed:.1f}s)"
+                )
+        else:
+            # Positive score - decay toward 0 (subtract)
+            new_score = max(0.0, current_score - decay_amount)
+
+        self._adverse_selection_score[market_id] = new_score
+        self._adverse_score_last_decay[market_id] = now
 
     def _get_dynamic_spread_multiplier(self, market_id: str) -> Decimal:
         """Calculate dynamic spread multiplier based on market conditions.
@@ -1299,6 +1401,19 @@ class TradingController:
         # When at max inventory, only quote the reducing side
         skip_bid = False
         skip_ask = False
+
+        # Check adverse selection unwind mode (only quote inventory-reducing side)
+        adverse_unwind = getattr(self, '_adverse_unwind_mode', {})
+        unwind_status = adverse_unwind.get(market_id)
+
+        if unwind_status == "long":
+            # Long inventory with adverse selection - only quote asks
+            skip_bid = True
+            logger.info(f"ADVERSE UNWIND: Long position, skipping bid to reduce inventory")
+        elif unwind_status == "short":
+            # Short inventory with adverse selection - only quote bids
+            skip_ask = True
+            logger.info(f"ADVERSE UNWIND: Short position, skipping ask to reduce inventory")
 
         # Check synchronous inventory blocks (set immediately on fill, before this quote cycle)
         if block_status == "long":

@@ -9,7 +9,7 @@ exchange:
 
 # Market to trade - UPDATE THIS before running!
 markets:
-  - ticker: "KXBTC15M-26JAN181315-15"  # 15-minute BTC market
+  - ticker: "KXBTC15M-26JAN181345-45"  # 15-minute BTC market
 
 strategy:
   components:
