@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from market_maker.core.config import ExchangeType, ExecutionMode, TradingConfig
+from market_maker.db.repository import TradingRepository
 from market_maker.domain.events import BookUpdate, Event, EventType, FillEvent
 from market_maker.domain.market_data import OrderBook
 from market_maker.domain.orders import QuoteSet
@@ -78,6 +79,7 @@ class TradingController:
         self._risk_manager: RiskManager | None = None
         self._state: StateStore | None = None
         self._market_data: MarketDataHandler | None = None
+        self._repository: TradingRepository | None = None
 
         # Per-market state
         self._book_builders: dict[str, OrderBookBuilder] = {}
@@ -87,6 +89,13 @@ class TradingController:
         # Tasks
         self._quote_task: asyncio.Task[None] | None = None
         self._reconcile_task: asyncio.Task[None] | None = None
+        self._pnl_log_task: asyncio.Task[None] | None = None
+
+        # Session tracking
+        self._session_id = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        self._start_time = datetime.now(UTC)
+        self._fill_count = 0
+        self._quote_count = 0
 
     async def start(self) -> None:
         """Start the trading controller.
@@ -119,8 +128,9 @@ class TradingController:
         # Start background tasks
         self._quote_task = asyncio.create_task(self._quote_loop())
         self._reconcile_task = asyncio.create_task(self._reconciliation_loop())
+        self._pnl_log_task = asyncio.create_task(self._pnl_logging_loop())
 
-        logger.info("Trading controller started")
+        logger.info(f"Trading controller started (session: {self._session_id})")
 
         # Wait for shutdown
         await self._shutdown_event.wait()
@@ -141,6 +151,13 @@ class TradingController:
 
         # Create state store
         self._state = StateStore()
+
+        # Create SQLite repository for persistence
+        self._repository = TradingRepository(
+            db_url="sqlite:///trading.db",
+            session_id=self._session_id,
+        )
+        logger.info(f"SQLite persistence enabled: trading.db (session: {self._session_id})")
 
         # Create strategy engine
         self._strategy = self._create_strategy()
@@ -327,13 +344,18 @@ class TradingController:
             event: Fill event
         """
         fill = event.fill
+        self._fill_count += 1
 
         if self._state:
             self._state.apply_fill(fill)
 
+        # Persist fill to database
+        if self._repository:
+            self._repository.save_fill(fill)
+
         logger.info(
-            f"Fill: {fill.order_side.value} {fill.size.value} {fill.side.value} "
-            f"@ {fill.price.value:.2f} on {fill.market_id}"
+            f"Fill #{self._fill_count}: {fill.order_side.value} {fill.size.value} "
+            f"{fill.side.value} @ {fill.price.value:.2f} on {fill.market_id}"
         )
 
     async def _quote_loop(self) -> None:
@@ -505,16 +527,24 @@ class TradingController:
         if not self._execution:
             return
 
+        self._quote_count += 1
+
         # For paper trading, we simulate fills against the book
         fills = self._execution.execute_quotes(quotes, book)
 
         for fill in fills:
+            self._fill_count += 1
+
             if self._state:
                 self._state.apply_fill(fill)
 
-            logger.debug(
-                f"Simulated fill: {fill.order_side.value} {fill.size.value} "
-                f"{fill.side.value} @ {fill.price.value:.2f}"
+            # Persist fill to database
+            if self._repository:
+                self._repository.save_fill(fill)
+
+            logger.info(
+                f"Paper fill #{self._fill_count}: {fill.order_side.value} "
+                f"{fill.size.value} {fill.side.value} @ {fill.price.value:.2f}"
             )
 
     async def _reconciliation_loop(self) -> None:
@@ -556,6 +586,49 @@ class TradingController:
                     f"exchange={position.net_inventory()}"
                 )
 
+    async def _pnl_logging_loop(self) -> None:
+        """Periodically log PnL summary."""
+        interval = 30.0  # Log every 30 seconds
+        logger.info("PnL logging started (every 30s)")
+
+        while self._running:
+            await asyncio.sleep(interval)
+
+            try:
+                self._log_pnl_summary()
+            except Exception as e:
+                logger.error(f"Error logging PnL: {e}")
+
+    def _log_pnl_summary(self) -> None:
+        """Log current PnL summary."""
+        if not self._state:
+            return
+
+        # Calculate total unrealized PnL across all markets
+        total_unrealized = Decimal("0")
+        for market in self._config.markets:
+            market_id = market.ticker
+            book = self._order_books.get(market_id)
+            if book:
+                mid_price = self._get_mid_price(book) or Price(Decimal("0.5"))
+                total_unrealized += self._state.calculate_unrealized_pnl(
+                    market_id, mid_price
+                )
+
+        realized = self._state.realized_pnl
+        total = realized + total_unrealized
+        fees = self._state.total_fees
+
+        # Runtime
+        runtime = datetime.now(UTC) - self._start_time
+        runtime_str = str(runtime).split(".")[0]  # Remove microseconds
+
+        logger.info(
+            f"[PnL] realized=${realized:.2f}, unrealized=${total_unrealized:.2f}, "
+            f"total=${total:.2f}, fees=${fees:.2f} | "
+            f"fills={self._fill_count}, quotes={self._quote_count}, runtime={runtime_str}"
+        )
+
     async def _shutdown(self) -> None:
         """Shut down the trading controller."""
         logger.info("Shutting down trading controller")
@@ -573,6 +646,11 @@ class TradingController:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._reconcile_task
 
+        if self._pnl_log_task:
+            self._pnl_log_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._pnl_log_task
+
         # Disconnect from exchange
         if self._exchange:
             # Cancel all orders first
@@ -585,7 +663,60 @@ class TradingController:
 
             await self._exchange.disconnect()
 
+        # Print final summary
+        self._print_session_summary()
+
+        # Close repository
+        if self._repository:
+            self._repository.close()
+
         logger.info("Trading controller shut down complete")
+
+    def _print_session_summary(self) -> None:
+        """Print final session summary."""
+        runtime = datetime.now(UTC) - self._start_time
+        runtime_str = str(runtime).split(".")[0]
+
+        logger.info("=" * 60)
+        logger.info("SESSION SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"Session ID: {self._session_id}")
+        logger.info(f"Runtime: {runtime_str}")
+        logger.info(f"Total Quotes: {self._quote_count}")
+        logger.info(f"Total Fills: {self._fill_count}")
+
+        if self._state:
+            # Calculate final PnL
+            total_unrealized = Decimal("0")
+            for market in self._config.markets:
+                market_id = market.ticker
+                book = self._order_books.get(market_id)
+                position = self._state.get_position(market_id)
+
+                if book and position:
+                    mid_price = self._get_mid_price(book) or Price(Decimal("0.5"))
+                    unrealized = self._state.calculate_unrealized_pnl(market_id, mid_price)
+                    total_unrealized += unrealized
+
+                    logger.info(
+                        f"  {market_id}: YES={position.yes_quantity}, "
+                        f"NO={position.no_quantity}, net={position.net_inventory()}"
+                    )
+
+            realized = self._state.realized_pnl
+            total = realized + total_unrealized
+            fees = self._state.total_fees
+
+            logger.info("-" * 60)
+            logger.info(f"Realized PnL:   ${realized:>10.2f}")
+            logger.info(f"Unrealized PnL: ${total_unrealized:>10.2f}")
+            logger.info(f"Total PnL:      ${total:>10.2f}")
+            logger.info(f"Total Fees:     ${fees:>10.2f}")
+            logger.info(f"Net PnL:        ${total - fees:>10.2f}")
+            logger.info("=" * 60)
+
+        if self._repository:
+            logger.info(f"Fills persisted to: trading.db (session: {self._session_id})")
 
 
 def _convert_params(params: dict[str, object]) -> dict[str, str]:
