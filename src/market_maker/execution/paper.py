@@ -147,31 +147,35 @@ class PaperExecutionEngine(ExecutionEngine):
     def _try_fill(self, order: Order, book: OrderBook) -> None:
         """Try to fill an order against the book.
 
+        For paper trading, we simulate fills at the ORDER's price (not the book's
+        best price), since market makers get filled at their quoted price.
+
         Args:
             order: Order to try filling
             book: Order book to match against
         """
         # Get the relevant book level for fill check
-        fill_price, available_size = self._get_matching_level(order, book)
+        book_price, available_size = self._get_matching_level(order, book)
 
-        if fill_price is None or available_size == 0:
+        if book_price is None or available_size == 0:
             return  # No fill possible
 
         # Check if order price crosses
-        if not self._price_crosses(order, fill_price):
+        if not self._price_crosses(order, book_price):
             return  # Order doesn't cross
 
         # Calculate fill size
         fill_size = min(order.size.value, available_size)
 
-        # Create fill
+        # Fill at the ORDER's price (not the book's best price)
+        # This is more realistic for market makers - we get filled at our quoted price
         fill = Fill(
             id=f"fill_{uuid4().hex[:12]}",
             order_id=order.id,
             market_id=order.market_id,
             side=order.side,
             order_side=order.order_side,
-            price=fill_price,
+            price=order.price,  # Use order price, not book price
             size=Quantity(fill_size),
             timestamp=datetime.now(UTC),
             is_simulated=True,
