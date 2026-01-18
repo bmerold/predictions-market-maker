@@ -16,6 +16,8 @@
             --red: #f85149;
             --yellow: #d29922;
             --blue: #58a6ff;
+            --purple: #a371f7;
+            --orange: #f0883e;
         }
 
         * {
@@ -41,9 +43,42 @@
             border-bottom: 1px solid var(--border-color);
         }
 
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
         .header h1 {
             font-size: 24px;
             font-weight: 600;
+        }
+
+        .mode-indicator {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .mode-paper {
+            background: linear-gradient(135deg, var(--yellow), var(--orange));
+            color: #000;
+            box-shadow: 0 0 20px rgba(240, 136, 62, 0.3);
+        }
+
+        .mode-live {
+            background: linear-gradient(135deg, var(--red), #da3633);
+            color: #fff;
+            box-shadow: 0 0 20px rgba(248, 81, 73, 0.4);
+            animation: pulse-live 2s infinite;
+        }
+
+        @keyframes pulse-live {
+            0%, 100% { box-shadow: 0 0 20px rgba(248, 81, 73, 0.4); }
+            50% { box-shadow: 0 0 30px rgba(248, 81, 73, 0.6); }
         }
 
         .status-badge {
@@ -70,7 +105,7 @@
 
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 20px;
             margin-bottom: 24px;
         }
@@ -80,6 +115,16 @@
             border: 1px solid var(--border-color);
             border-radius: 8px;
             padding: 20px;
+        }
+
+        .card-wide {
+            grid-column: span 2;
+        }
+
+        @media (max-width: 800px) {
+            .card-wide {
+                grid-column: span 1;
+            }
         }
 
         .card h2 {
@@ -144,6 +189,45 @@
 
         .row-value {
             font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+        }
+
+        /* PnL Chart */
+        .chart-container {
+            position: relative;
+            height: 200px;
+            margin-top: 10px;
+        }
+
+        #pnl-chart {
+            width: 100%;
+            height: 100%;
+        }
+
+        .chart-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+
+        .chart-legend {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 12px;
+            font-size: 12px;
+        }
+
+        .chart-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
         }
 
         table {
@@ -272,13 +356,13 @@
             opacity: 0.7;
         }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        .loading {
-            animation: pulse 1.5s infinite;
+        .simulated-tag {
+            font-size: 10px;
+            background: rgba(210, 153, 34, 0.2);
+            color: var(--yellow);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 6px;
         }
     </style>
 </head>
@@ -288,10 +372,12 @@
     </div>
 
     <div class="header">
-        <h1>Market Maker Dashboard</h1>
+        <div class="header-left">
+            <h1>Market Maker Dashboard</h1>
+            <span id="mode-indicator" class="mode-indicator mode-paper">PAPER</span>
+        </div>
         <div>
             <span id="status-badge" class="status-badge status-connecting">Connecting...</span>
-            <span id="mode-badge" class="status-badge" style="margin-left: 8px; background: rgba(88, 166, 255, 0.2); color: var(--blue);">--</span>
         </div>
     </div>
 
@@ -313,6 +399,27 @@
             <div class="row">
                 <span class="row-label">Fees</span>
                 <span id="fees" class="row-value">$0.00</span>
+            </div>
+        </div>
+
+        <div class="card card-wide">
+            <h2>PnL History</h2>
+            <div class="chart-legend">
+                <div class="chart-legend-item">
+                    <div class="legend-dot" style="background: var(--green);"></div>
+                    <span>Realized PnL</span>
+                </div>
+                <div class="chart-legend-item">
+                    <div class="legend-dot" style="background: var(--blue);"></div>
+                    <span>Total PnL</span>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="pnl-chart"></canvas>
+            </div>
+            <div class="chart-labels">
+                <span id="chart-start-time">--</span>
+                <span id="chart-end-time">--</span>
             </div>
         </div>
 
@@ -383,11 +490,11 @@
             <thead>
                 <tr>
                     <th>Time</th>
-                    <th>Side</th>
-                    <th>Type</th>
+                    <th>Action</th>
+                    <th>Contract</th>
                     <th>Price</th>
                     <th>Size</th>
-                    <th>Market</th>
+                    <th>Type</th>
                 </tr>
             </thead>
             <tbody id="fills-table">
@@ -403,7 +510,15 @@
     <script>
         const API_BASE = window.location.origin + '/api/v1';
         let killSwitchActive = false;
-        let lastFillCount = 0;
+        let tradingMode = 'paper';
+
+        // PnL history data
+        const pnlHistory = {
+            timestamps: [],
+            realized: [],
+            total: [],
+            maxPoints: 120  // 2 minutes of data at 1 second intervals
+        };
 
         function formatCurrency(value) {
             const num = parseFloat(value) || 0;
@@ -437,6 +552,140 @@
             return 'neutral';
         }
 
+        function updateModeIndicator(mode) {
+            const indicator = document.getElementById('mode-indicator');
+            tradingMode = mode.toLowerCase();
+
+            if (tradingMode === 'live') {
+                indicator.textContent = 'LIVE';
+                indicator.className = 'mode-indicator mode-live';
+            } else {
+                indicator.textContent = 'PAPER';
+                indicator.className = 'mode-indicator mode-paper';
+            }
+        }
+
+        function addPnlDataPoint(realized, total) {
+            const now = new Date();
+            pnlHistory.timestamps.push(now);
+            pnlHistory.realized.push(realized);
+            pnlHistory.total.push(total);
+
+            // Keep only maxPoints
+            if (pnlHistory.timestamps.length > pnlHistory.maxPoints) {
+                pnlHistory.timestamps.shift();
+                pnlHistory.realized.shift();
+                pnlHistory.total.shift();
+            }
+
+            drawChart();
+        }
+
+        function drawChart() {
+            const canvas = document.getElementById('pnl-chart');
+            const ctx = canvas.getContext('2d');
+            const rect = canvas.parentElement.getBoundingClientRect();
+
+            // Set canvas size for retina displays
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            ctx.scale(dpr, dpr);
+
+            const width = rect.width;
+            const height = rect.height;
+            const padding = { top: 20, right: 20, bottom: 20, left: 50 };
+            const chartWidth = width - padding.left - padding.right;
+            const chartHeight = height - padding.top - padding.bottom;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, width, height);
+
+            if (pnlHistory.timestamps.length < 2) {
+                ctx.fillStyle = '#8b949e';
+                ctx.font = '12px -apple-system, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Collecting data...', width / 2, height / 2);
+                return;
+            }
+
+            // Find min/max values
+            const allValues = [...pnlHistory.realized, ...pnlHistory.total];
+            let minVal = Math.min(...allValues);
+            let maxVal = Math.max(...allValues);
+
+            // Add padding to y-axis
+            const range = maxVal - minVal || 1;
+            minVal = minVal - range * 0.1;
+            maxVal = maxVal + range * 0.1;
+
+            // Draw zero line if applicable
+            if (minVal < 0 && maxVal > 0) {
+                const zeroY = padding.top + chartHeight - ((0 - minVal) / (maxVal - minVal)) * chartHeight;
+                ctx.strokeStyle = '#30363d';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(padding.left, zeroY);
+                ctx.lineTo(width - padding.right, zeroY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Draw grid lines
+            ctx.strokeStyle = '#21262d';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 4; i++) {
+                const y = padding.top + (chartHeight / 4) * i;
+                ctx.beginPath();
+                ctx.moveTo(padding.left, y);
+                ctx.lineTo(width - padding.right, y);
+                ctx.stroke();
+
+                // Y-axis labels
+                const value = maxVal - ((maxVal - minVal) / 4) * i;
+                ctx.fillStyle = '#8b949e';
+                ctx.font = '10px SF Mono, monospace';
+                ctx.textAlign = 'right';
+                ctx.fillText('$' + value.toFixed(2), padding.left - 5, y + 3);
+            }
+
+            // Draw lines helper
+            function drawLine(data, color) {
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+
+                for (let i = 0; i < data.length; i++) {
+                    const x = padding.left + (i / (data.length - 1)) * chartWidth;
+                    const y = padding.top + chartHeight - ((data[i] - minVal) / (maxVal - minVal)) * chartHeight;
+
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                ctx.stroke();
+            }
+
+            // Draw realized PnL line
+            drawLine(pnlHistory.realized, '#3fb950');
+
+            // Draw total PnL line
+            drawLine(pnlHistory.total, '#58a6ff');
+
+            // Update time labels
+            if (pnlHistory.timestamps.length > 0) {
+                document.getElementById('chart-start-time').textContent =
+                    pnlHistory.timestamps[0].toLocaleTimeString();
+                document.getElementById('chart-end-time').textContent =
+                    pnlHistory.timestamps[pnlHistory.timestamps.length - 1].toLocaleTimeString();
+            }
+        }
+
         async function fetchStatus() {
             try {
                 const response = await fetch(API_BASE + '/status');
@@ -455,11 +704,14 @@
                     statusBadge.className = 'status-badge status-stopped';
                 }
 
-                // Update mode badge
-                document.getElementById('mode-badge').textContent = data.mode.toUpperCase();
+                // Update mode indicator
+                updateModeIndicator(data.mode);
 
                 // Update runtime
                 document.getElementById('runtime').textContent = formatRuntime(data.start_time);
+
+                let realizedPnl = 0;
+                let totalPnl = 0;
 
                 // Update market data if available
                 if (data.markets && data.markets.length > 0) {
@@ -474,18 +726,21 @@
                     netInv.className = 'metric-value metric-small ' + getPnlClass(market.net_inventory);
 
                     // PnL
-                    const totalPnl = document.getElementById('total-pnl');
-                    totalPnl.textContent = formatCurrency(market.total_pnl);
-                    totalPnl.className = 'metric-value ' + getPnlClass(market.total_pnl);
+                    realizedPnl = market.realized_pnl;
+                    totalPnl = market.total_pnl;
 
                     document.getElementById('realized-pnl').textContent = formatCurrency(market.realized_pnl);
                     document.getElementById('unrealized-pnl').textContent = formatCurrency(market.unrealized_pnl);
                 }
 
                 // Update total PnL from all markets
+                totalPnl = data.total_pnl;
                 const totalPnlEl = document.getElementById('total-pnl');
                 totalPnlEl.textContent = formatCurrency(data.total_pnl);
                 totalPnlEl.className = 'metric-value ' + getPnlClass(data.total_pnl);
+
+                // Add data point to chart
+                addPnlDataPoint(realizedPnl, totalPnl);
 
                 document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
 
@@ -523,13 +778,13 @@
                 const recentFills = fills.slice().reverse().slice(0, 20);
 
                 tbody.innerHTML = recentFills.map(fill => `
-                    <tr class="${fill.is_simulated ? 'fill-simulated' : ''}">
+                    <tr>
                         <td>${formatTime(fill.timestamp)}</td>
                         <td class="${fill.order_side === 'buy' ? 'side-buy' : 'side-sell'}">${fill.order_side.toUpperCase()}</td>
                         <td>${fill.side.toUpperCase()}</td>
                         <td>${formatPrice(fill.price)}</td>
                         <td>${fill.size}</td>
-                        <td style="font-size: 10px;">${fill.market_id.substring(0, 20)}...</td>
+                        <td>${fill.is_simulated ? '<span class="simulated-tag">SIMULATED</span>' : '<span style="color: var(--green);">REAL</span>'}</td>
                     </tr>
                 `).join('');
 
@@ -601,6 +856,9 @@
                 btn.className = 'btn-danger';
             }
         }
+
+        // Handle window resize
+        window.addEventListener('resize', drawChart);
 
         // Initial fetch
         fetchStatus();
