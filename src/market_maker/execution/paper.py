@@ -12,9 +12,10 @@ from uuid import uuid4
 from market_maker.domain.market_data import OrderBook
 from market_maker.domain.orders import Fill, Order, OrderRequest, OrderStatus
 from market_maker.domain.types import OrderSide, Price, Quantity, Side
+from market_maker.execution.base import ExecutionEngine
 
 
-class PaperExecutionEngine:
+class PaperExecutionEngine(ExecutionEngine):
     """Simulates order execution for paper trading.
 
     Features:

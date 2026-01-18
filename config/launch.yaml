@@ -1,0 +1,81 @@
+# Launch configuration for BTC hourly market maker
+# Update the market ticker before each run!
+
+mode: paper  # Start with paper trading!
+
+exchange:
+  type: kalshi
+  demo: false  # Production
+  # Credentials loaded from environment or set directly:
+  # api_key: your_api_key
+  # private_key_path: /path/to/key.pem
+
+# Market to trade - UPDATE THIS before running!
+# Format: KXBTCD-{DATE}{HOUR}H-T{STRIKE}
+# Example: KXBTCD-25JAN17H16-T105249.99
+markets:
+  - ticker: "KXBTCD-26JAN1817-T95499.99"
+
+strategy:
+  components:
+    volatility:
+      type: fixed
+      params:
+        volatility: "0.05"
+
+    reservation_price:
+      type: avellaneda_stoikov
+      params:
+        gamma: "0.1"
+
+    skew:
+      type: linear
+      params:
+        intensity: "0.01"
+
+    spread:
+      type: fixed
+      params:
+        base_spread: "0.02"
+
+    sizer:
+      type: asymmetric
+      params:
+        base_size: "10"  # Small size for testing
+
+  max_inventory: 100
+  min_spread: "0.01"
+
+risk:
+  rule_order:
+    - stale_data
+    - settlement_cutoff
+    - daily_loss_limit
+    - max_inventory
+    - max_order_size
+
+  rules:
+    stale_data:
+      enabled: true
+      max_age_seconds: 5
+
+    settlement_cutoff:
+      enabled: true
+      cutoff_minutes: 3
+
+    daily_loss_limit:
+      enabled: true
+      limit: "50.00"
+
+    max_inventory:
+      enabled: true
+      limit: "100"
+
+    max_order_size:
+      enabled: true
+      limit: "50"
+
+quote_interval_ms: 1000
+reconciliation_interval_seconds: 60
+
+log_level: INFO
