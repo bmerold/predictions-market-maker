@@ -45,13 +45,13 @@ class OrderDiffer:
 
     def __init__(
         self,
-        price_tolerance: Decimal = Decimal("0.001"),
+        price_tolerance: Decimal = Decimal("0.01"),  # 1 cent tolerance to reduce churn
         size_tolerance: int = 0,
     ) -> None:
         """Initialize differ with tolerances.
 
         Args:
-            price_tolerance: Max price difference to consider equal
+            price_tolerance: Max price difference to consider equal (default 1 cent)
             size_tolerance: Max size difference to consider equal
         """
         self._price_tolerance = price_tolerance
@@ -91,8 +91,8 @@ class OrderDiffer:
                 else:
                     request_map["no_ask"] = req
 
-        # Compare each quote type
-        for quote_type in ["yes_bid", "yes_ask", "no_bid", "no_ask"]:
+        # Compare each quote type (YES side only - NO orders are redundant)
+        for quote_type in ["yes_bid", "yes_ask"]:
             new_request = request_map.get(quote_type)
             current_order = self._get_current_order(current_orders, quote_type)
 

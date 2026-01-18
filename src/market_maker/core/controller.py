@@ -17,14 +17,14 @@ from typing import TYPE_CHECKING
 from market_maker.core.config import ExchangeType, ExecutionMode, TradingConfig
 from market_maker.db.repository import TradingRepository
 from market_maker.domain.events import BookUpdate, Event, EventType, FillEvent
-from market_maker.domain.orders import Fill
+from market_maker.domain.orders import Fill, Quote, QuoteSet
 from market_maker.domain.market_data import OrderBook
-from market_maker.domain.orders import QuoteSet
 from market_maker.domain.positions import Position
 from market_maker.domain.types import Price
 from market_maker.exchange.base import ExchangeAdapter
 from market_maker.exchange.kalshi import KalshiExchangeAdapter
 from market_maker.exchange.kalshi.auth import KalshiCredentials
+from market_maker.execution.live import LiveExecutionEngine
 from market_maker.execution.paper import PaperExecutionEngine
 from market_maker.market_data.book_builder import OrderBookBuilder
 from market_maker.market_data.handler import MarketDataHandler
@@ -239,8 +239,10 @@ class TradingController:
         # Create exchange adapter
         self._exchange = self._create_exchange()
 
-        # Create state store
-        self._state = StateStore()
+        # Create state store with Kalshi maker fee rate
+        # Kalshi maker fee: 0.0175 × contracts × P × (1-P)
+        KALSHI_MAKER_FEE_RATE = Decimal("0.0175")
+        self._state = StateStore(fee_rate=KALSHI_MAKER_FEE_RATE)
 
         # Create SQLite repository for persistence
         self._repository = TradingRepository(
@@ -373,12 +375,16 @@ class TradingController:
     def _create_execution(self) -> ExecutionEngine:
         """Create the execution engine based on mode."""
         if self._config.mode == ExecutionMode.PAPER:
+            logger.info("Using PAPER execution engine (simulated fills)")
             return PaperExecutionEngine()
         else:
-            # Live execution would go here
-            # For now, default to paper
-            logger.warning("Live execution not implemented, using paper")
-            return PaperExecutionEngine()
+            # Live execution - requires exchange adapter
+            if self._exchange:
+                logger.warning("Using LIVE execution engine - REAL MONEY")
+                return LiveExecutionEngine(self._exchange)
+            else:
+                logger.warning("No exchange adapter for live mode, falling back to paper")
+                return PaperExecutionEngine()
 
     def _setup_signal_handlers(self) -> None:
         """Set up signal handlers for graceful shutdown."""
@@ -518,10 +524,17 @@ class TradingController:
                     context = self._build_risk_context(market_id, book, position)
                     decision = self._risk_manager.evaluate(quotes, context)
                     if decision.action.name == "BLOCK":
-                        logger.debug(f"Quotes blocked: {decision.reason}")
+                        logger.info(f"Quotes blocked by risk: {decision.reason}")
                         continue
                     elif decision.modified_quotes:
                         quotes = decision.modified_quotes
+
+                # Clamp quotes to stay inside the spread (MAKER mode)
+                # This prevents crossing the spread and becoming a taker
+                quotes = self._clamp_quotes_to_spread(quotes, book)
+                if quotes is None:
+                    logger.info(f"Quotes skipped: spread too tight to provide liquidity")
+                    continue
 
                 # Execute quotes
                 if self._execution and quotes:
@@ -544,6 +557,84 @@ class TradingController:
         best_ask = book.yes_asks[0].price.value
         mid = (best_bid + best_ask) / 2
         return Price(mid)
+
+    def _clamp_quotes_to_spread(
+        self,
+        quotes: QuoteSet,
+        book: OrderBook,
+    ) -> QuoteSet | None:
+        """Clamp quotes to stay inside the market spread (MAKER mode).
+
+        To be a market MAKER (provide liquidity), we must:
+        - Place bids BELOW the best ask (don't lift the ask)
+        - Place asks ABOVE the best bid (don't hit the bid)
+
+        If our quotes would cross the spread, we adjust them to be
+        1 cent inside the spread instead.
+
+        Args:
+            quotes: Generated quotes from strategy
+            book: Current order book
+
+        Returns:
+            Adjusted QuoteSet, or None if no valid quotes possible
+        """
+        if not book.yes_bids or not book.yes_asks:
+            return quotes  # Can't check, pass through
+
+        best_bid = book.yes_bids[0].price.value
+        best_ask = book.yes_asks[0].price.value
+
+        # Minimum price increment (1 cent = 0.01)
+        tick = Decimal("0.01")
+
+        yes_quote = quotes.yes_quote
+
+        # Price bounds
+        MIN_PRICE = Decimal("0.01")
+        MAX_PRICE = Decimal("0.99")
+
+        # Clamp our bid to be strictly below the best ask
+        # (we want to be at or below best_ask - tick)
+        clamped_bid = yes_quote.bid_price.value
+        if clamped_bid >= best_ask:
+            clamped_bid = max(MIN_PRICE, best_ask - tick)
+            logger.info(
+                f"Clamped bid from {yes_quote.bid_price.value:.2f} to {clamped_bid:.2f} "
+                f"(best_ask={best_ask:.2f}) to avoid crossing"
+            )
+
+        # Clamp our ask to be strictly above the best bid
+        # (we want to be at or above best_bid + tick)
+        clamped_ask = yes_quote.ask_price.value
+        if clamped_ask <= best_bid:
+            clamped_ask = min(MAX_PRICE, best_bid + tick)
+            logger.info(
+                f"Clamped ask from {yes_quote.ask_price.value:.2f} to {clamped_ask:.2f} "
+                f"(best_bid={best_bid:.2f}) to avoid crossing"
+            )
+
+        # Ensure bid < ask after clamping (only fail if they actually cross)
+        if clamped_bid >= clamped_ask:
+            logger.info(
+                f"After clamping, bid >= ask ({clamped_bid:.2f} >= {clamped_ask:.2f}), "
+                f"market spread too tight"
+            )
+            return None
+
+        # Create adjusted quote
+        adjusted_yes_quote = Quote(
+            bid_price=Price(clamped_bid),
+            bid_size=yes_quote.bid_size,
+            ask_price=Price(clamped_ask),
+            ask_size=yes_quote.ask_size,
+        )
+
+        return QuoteSet(
+            market_id=quotes.market_id,
+            yes_quote=adjusted_yes_quote,
+            timestamp=quotes.timestamp,
+        )
 
     def _get_base_size(self) -> int:
         """Get base order size from config."""
@@ -620,8 +711,13 @@ class TradingController:
 
         self._quote_count += 1
 
-        # For paper trading, we simulate fills against the book
-        fills = self._execution.execute_quotes(quotes, book)
+        # Handle both sync (paper) and async (live) execution
+        if isinstance(self._execution, LiveExecutionEngine):
+            # Live execution is async
+            fills = await self._execution.execute_quotes(quotes, book)
+        else:
+            # Paper execution is sync
+            fills = self._execution.execute_quotes(quotes, book)
 
         for fill in fills:
             self._fill_count += 1
@@ -652,7 +748,11 @@ class TradingController:
                 logger.error(f"Error in reconciliation: {e}")
 
     async def _reconcile_positions(self) -> None:
-        """Reconcile local positions with exchange."""
+        """Reconcile local positions with exchange.
+
+        If exchange position differs from local, update local to match exchange
+        (exchange is the source of truth).
+        """
         if not self._exchange or not self._state:
             return
 
@@ -662,10 +762,13 @@ class TradingController:
             local_position = self._state.get_position(position.market_id)
 
             if local_position is None:
+                # No local position - adopt exchange position
                 logger.warning(
                     f"Exchange has position for {position.market_id} "
-                    f"but no local position"
+                    f"but no local position - syncing from exchange: "
+                    f"yes={position.yes_quantity}, no={position.no_quantity}"
                 )
+                self._state.set_position(position)
                 continue
 
             if (
@@ -675,8 +778,10 @@ class TradingController:
                 logger.warning(
                     f"Position mismatch for {position.market_id}: "
                     f"local={local_position.net_inventory()}, "
-                    f"exchange={position.net_inventory()}"
+                    f"exchange={position.net_inventory()} - syncing from exchange"
                 )
+                # Update local position to match exchange (exchange is source of truth)
+                self._state.set_position(position)
 
     async def _pnl_logging_loop(self) -> None:
         """Periodically log PnL summary."""

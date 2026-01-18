@@ -220,14 +220,12 @@ class QuoteSet:
     def to_order_requests(self) -> list[OrderRequest]:
         """Convert quotes to order requests.
 
-        Returns 4 orders:
+        Returns 2 orders (YES side only):
         - YES BUY (bid)
         - YES SELL (ask)
-        - NO BUY (bid)
-        - NO SELL (ask)
-        """
-        no_quote = self.no_quote()
 
+        NO side orders are redundant since NO bid = YES ask equivalent.
+        """
         return [
             OrderRequest.create(
                 market_id=self.market_id,
@@ -242,20 +240,6 @@ class QuoteSet:
                 order_side=OrderSide.SELL,
                 price=self.yes_quote.ask_price,
                 size=self.yes_quote.ask_size,
-            ),
-            OrderRequest.create(
-                market_id=self.market_id,
-                side=Side.NO,
-                order_side=OrderSide.BUY,
-                price=no_quote.bid_price,
-                size=no_quote.bid_size,
-            ),
-            OrderRequest.create(
-                market_id=self.market_id,
-                side=Side.NO,
-                order_side=OrderSide.SELL,
-                price=no_quote.ask_price,
-                size=no_quote.ask_size,
             ),
         ]
 

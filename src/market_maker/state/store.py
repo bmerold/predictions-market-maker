@@ -76,6 +76,14 @@ class StateStore:
         """
         return self._positions.get(market_id)
 
+    def set_position(self, position: Position) -> None:
+        """Set position for a market (used for reconciliation).
+
+        Args:
+            position: Position to set
+        """
+        self._positions[position.market_id] = position
+
     def get_market_ids(self) -> list[str]:
         """Get all market IDs with positions.
 
@@ -286,16 +294,25 @@ class StateStore:
         return total_cost / Decimal(new_qty)
 
     def _calculate_fee(self, fill: Fill) -> Decimal:
-        """Calculate fee for a fill.
+        """Calculate fee for a fill using Kalshi's formula.
+
+        Kalshi fees: round_up(rate × contracts × P × (1-P))
+        - Taker rate: 0.07
+        - Maker rate: 0.0175
 
         Args:
             fill: The fill
 
         Returns:
-            Fee amount
+            Fee amount in dollars
         """
-        notional = fill.price.value * Decimal(fill.size.value)
-        return notional * self._fee_rate
+        p = fill.price.value
+        contracts = fill.size.value
+        # Kalshi formula: rate × contracts × P × (1-P)
+        # Round up to nearest cent
+        raw_fee = self._fee_rate * Decimal(contracts) * p * (1 - p)
+        # Round up to nearest cent (0.01)
+        return (raw_fee * 100).to_integral_value(rounding="ROUND_CEILING") / 100
 
     def calculate_unrealized_pnl(
         self, market_id: str, mark_price: Price

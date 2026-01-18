@@ -43,9 +43,26 @@ class MaxInventoryRule(RiskRule):
             BLOCK if either direction would exceed limit, ALLOW otherwise
         """
         current = context.current_inventory
+        bid_size = proposed_quotes.yes_quote.bid_size.value
+        ask_size = proposed_quotes.yes_quote.ask_size.value
+
+        # FIRST: Block ALL quotes if already significantly over limit
+        if abs(current) >= self._max_inventory:
+            # Already at or over limit - only allow trades that reduce inventory
+            if current > 0 and bid_size > 0:
+                return RiskDecision(
+                    action=RiskAction.BLOCK,
+                    reason=f"Already at max long inventory ({current} >= {self._max_inventory}), "
+                    f"blocking further buys",
+                )
+            if current < 0 and ask_size > 0:
+                return RiskDecision(
+                    action=RiskAction.BLOCK,
+                    reason=f"Already at max short inventory ({current} <= -{self._max_inventory}), "
+                    f"blocking further sells",
+                )
 
         # Check if buying (bid filled) would exceed long limit
-        bid_size = proposed_quotes.yes_quote.bid_size.value
         if current + bid_size > self._max_inventory:
             return RiskDecision(
                 action=RiskAction.BLOCK,
@@ -54,7 +71,6 @@ class MaxInventoryRule(RiskRule):
             )
 
         # Check if selling (ask filled) would exceed short limit
-        ask_size = proposed_quotes.yes_quote.ask_size.value
         if current - ask_size < -self._max_inventory:
             return RiskDecision(
                 action=RiskAction.BLOCK,

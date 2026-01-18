@@ -274,6 +274,10 @@ class KalshiExchangeAdapter(ExchangeAdapter):
         msg_type = message.get("type")
         logger.debug(f"WebSocket message received, type: {msg_type}")
 
+        # Debug: log full message for orderbook snapshots
+        if msg_type == "orderbook_snapshot":
+            logger.debug(f"Raw orderbook_snapshot: {message}")
+
         try:
             event: Event | None = None
 

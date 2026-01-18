@@ -261,6 +261,23 @@ class KalshiNormalizer:
         delta = msg.get("delta", 0)
         side = msg.get("side", "yes")
 
+        # YES side updates go to YES bids
+        # NO side updates go to YES asks (at converted price)
+        is_yes_side = side.lower() == "yes"
+
+        if is_yes_side:
+            # YES bid - price stays the same
+            converted_price = price
+            is_bid = True
+        else:
+            # NO bid at price P = YES ask at price (100 - P)
+            converted_price = 100 - price
+            is_bid = False
+
+        # Delta is the new size at this price level (0 = remove level)
+        # Kalshi sends absolute size, not a change
+        new_size = max(0, delta)
+
         return BookUpdate(
             event_type=EventType.BOOK_UPDATE,
             timestamp=datetime.now(UTC),
@@ -268,10 +285,10 @@ class KalshiNormalizer:
             update_type=BookUpdateType.DELTA,
             yes_bids=[],
             yes_asks=[],
-            delta_price=self.normalize_price(price),
-            delta_size=abs(delta),
-            delta_side=self.normalize_side(side),
-            delta_is_bid=delta > 0,  # Positive delta = bid added
+            delta_price=self.normalize_price(converted_price),
+            delta_size=new_size,
+            delta_side=Side.YES if is_yes_side else Side.NO,
+            delta_is_bid=is_bid,
         )
 
     def normalize_order(self, data: dict[str, Any]) -> Order:
@@ -283,6 +300,14 @@ class KalshiNormalizer:
         Returns:
             Order domain object
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Normalizing order data: {data}")
+
+        # Kalshi uses initial_count for order size, fill_count for filled
+        order_size = data.get("initial_count") or data.get("remaining_count") or data.get("count", 1)
+        filled_count = data.get("fill_count", 0)
+
         return Order(
             id=data.get("order_id", ""),
             client_order_id=data.get("client_order_id", ""),
@@ -290,11 +315,11 @@ class KalshiNormalizer:
             side=self.normalize_side(data.get("side", "yes")),
             order_side=self.normalize_order_side(data.get("action", "buy")),
             price=self.normalize_price(data.get("yes_price", 50)),
-            size=Quantity(data.get("count", 0)),
-            filled_size=data.get("filled_count", 0),
+            size=Quantity(order_size),
+            filled_size=filled_count,
             status=self.normalize_order_status(data.get("status", "pending")),
             created_at=self.normalize_timestamp(data.get("created_time")),
-            updated_at=self.normalize_timestamp(data.get("updated_time")),
+            updated_at=self.normalize_timestamp(data.get("last_update_time")),
         )
 
     def normalize_fill(self, data: dict[str, Any]) -> Fill:
@@ -306,14 +331,20 @@ class KalshiNormalizer:
         Returns:
             Fill domain object
         """
+        # Kalshi uses 'ticker' in REST, 'market_ticker' in WebSocket
+        market_id = data.get("ticker") or data.get("market_ticker", "")
+
+        # Size field varies - try multiple names
+        size = data.get("count") or data.get("size") or data.get("fill_count") or 1
+
         return Fill(
-            id=data.get("trade_id", ""),
+            id=data.get("trade_id") or data.get("fill_id", ""),
             order_id=data.get("order_id", ""),
-            market_id=data.get("ticker", ""),
+            market_id=market_id,
             side=self.normalize_side(data.get("side", "yes")),
             order_side=self.normalize_order_side(data.get("action", "buy")),
             price=self.normalize_price(data.get("yes_price", 50)),
-            size=Quantity(data.get("count", 0)),
+            size=Quantity(size),
             timestamp=self.normalize_timestamp(data.get("created_time")),
             is_simulated=False,
         )
@@ -380,7 +411,11 @@ class KalshiNormalizer:
         Returns:
             FillEvent
         """
-        fill = self.normalize_fill(data.get("msg", {}))
+        import logging
+        logger = logging.getLogger(__name__)
+        msg = data.get("msg", {})
+        logger.debug(f"Raw fill message: {msg}")
+        fill = self.normalize_fill(msg)
         return FillEvent(
             event_type=EventType.FILL,
             timestamp=fill.timestamp,
