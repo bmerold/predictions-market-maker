@@ -774,8 +774,8 @@
                     return;
                 }
 
-                // Update fill count
-                document.getElementById('fill-count').textContent = fills.length;
+                // Update fill count from status (has total count, not just returned limit)
+                document.getElementById('fill-count').textContent = statusData.total_fills || fills.length;
 
                 // Reverse to show most recent first
                 const recentFills = fills.slice().reverse().slice(0, 20);

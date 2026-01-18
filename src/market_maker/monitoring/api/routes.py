@@ -60,6 +60,7 @@ class StatusResponse(BaseModel):
     markets: list[MarketStatus]
     total_pnl: float
     total_fees: float
+    total_fills: int
     start_time: str
     current_time: str
 
@@ -177,6 +178,7 @@ def create_monitoring_router(
 
         total_pnl = sum(m.total_pnl for m in markets)
         total_fees = float(state_store.total_fees) if state_store else 0.0
+        total_fills = len(controller._fills) if controller else 0
 
         return StatusResponse(
             running=controller.is_running if controller else False,
@@ -184,6 +186,7 @@ def create_monitoring_router(
             markets=markets,
             total_pnl=total_pnl,
             total_fees=total_fees,
+            total_fills=total_fills,
             start_time=_start_time.isoformat(),
             current_time=now.isoformat(),
         )

@@ -1081,12 +1081,13 @@ class TradingController:
             self._adverse_selection_score[market_id] = (good_fills - bad_fills) / total
 
     def _decay_adverse_selection_score(self, market_id: str) -> None:
-        """Decay adverse selection score toward 0 over time.
+        """Decay adverse selection score by aging out old fills.
 
         This allows the bot to resume quoting after a cooldown period,
         rather than being stuck with a bad score forever.
 
-        Score decays by _adverse_decay_rate per second toward 0.
+        Fills older than 30 seconds are removed from the history,
+        which causes the score to be recalculated with fewer (or no) fills.
         """
         now = time.time()
         last_decay = self._adverse_score_last_decay.get(market_id, now)
@@ -1095,28 +1096,26 @@ class TradingController:
         if elapsed < self._adverse_decay_interval:
             return  # Too soon to decay
 
-        current_score = self._adverse_selection_score.get(market_id, 0.0)
-        if current_score == 0.0:
-            self._adverse_score_last_decay[market_id] = now
-            return  # Already at neutral
-
-        # Calculate decay amount based on elapsed time
-        decay_amount = self._adverse_decay_rate * elapsed
-
-        if current_score < 0:
-            # Negative score - decay toward 0 (add)
-            new_score = min(0.0, current_score + decay_amount)
-            if new_score != current_score:
-                logger.debug(
-                    f"Adverse score decay for {market_id}: {current_score:.2f} -> {new_score:.2f} "
-                    f"(+{decay_amount:.2f} over {elapsed:.1f}s)"
-                )
-        else:
-            # Positive score - decay toward 0 (subtract)
-            new_score = max(0.0, current_score - decay_amount)
-
-        self._adverse_selection_score[market_id] = new_score
         self._adverse_score_last_decay[market_id] = now
+
+        # Age out old fills (older than 30 seconds)
+        FILL_AGE_LIMIT = 30.0  # seconds
+        fills = self._recent_fills_for_adverse.get(market_id, [])
+        if fills:
+            old_count = len(fills)
+            # Keep only fills from the last 30 seconds
+            self._recent_fills_for_adverse[market_id] = [
+                f for f in fills if (now - f[0]) < FILL_AGE_LIMIT
+            ]
+            new_count = len(self._recent_fills_for_adverse[market_id])
+
+            if new_count < old_count:
+                logger.info(
+                    f"Adverse selection decay: aged out {old_count - new_count} fills "
+                    f"for {market_id} ({new_count} remaining)"
+                )
+                # Recalculate score with the reduced fill history
+                self._recalculate_adverse_selection_score(market_id)
 
     def _get_dynamic_spread_multiplier(self, market_id: str) -> Decimal:
         """Calculate dynamic spread multiplier based on market conditions.
