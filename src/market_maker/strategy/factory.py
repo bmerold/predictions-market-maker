@@ -20,7 +20,7 @@ from market_maker.strategy.components.base import (
 from market_maker.strategy.components.reservation import AvellanedaStoikovReservation
 from market_maker.strategy.components.sizer import AsymmetricSizer
 from market_maker.strategy.components.skew import LinearSkew
-from market_maker.strategy.components.spread import FixedSpread
+from market_maker.strategy.components.spread import AvellanedaStoikovSpread, FixedSpread
 from market_maker.strategy.engine import StrategyEngine
 from market_maker.strategy.volatility.base import VolatilityEstimator
 from market_maker.strategy.volatility.ewma import EWMAVolatilityEstimator
@@ -237,6 +237,22 @@ def _create_spread_calculator(
         base_spread = Decimal(params.get("base_spread", "0.02"))
         min_spread = Decimal(params.get("min_spread", "0"))
         return FixedSpread(base_spread=base_spread, min_spread=min_spread)
+
+    elif calc_type == "avellaneda_stoikov":
+        gamma = Decimal(params.get("gamma", "0.1"))
+        k = Decimal(params.get("k", "1.5"))
+        min_spread = Decimal(params.get("min_spread", "0.03"))
+        max_spread = Decimal(params.get("max_spread", "0.10"))  # Cap for binary markets
+        # Optional volatility override for binary markets (default: 0.10 = 10%)
+        vol_str = params.get("volatility")
+        volatility = Decimal(vol_str) if vol_str else Decimal("0.10")
+        return AvellanedaStoikovSpread(
+            gamma=gamma,
+            k=k,
+            min_spread=min_spread,
+            max_spread=max_spread,
+            volatility=volatility,
+        )
 
     else:
         raise ValueError(f"Unknown spread type: {calc_type}")

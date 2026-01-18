@@ -181,6 +181,7 @@ class TradingRepository:
                 size=fill.size.value,
                 timestamp=fill.timestamp,
                 is_simulated=fill.is_simulated,
+                is_taker=fill.is_taker,
                 session_id=self._session_id,
             )
             session.merge(record)  # Use merge to handle duplicates
@@ -253,6 +254,7 @@ class TradingRepository:
             size=Quantity(int(record.size)),
             timestamp=record.timestamp,
             is_simulated=record.is_simulated,
+            is_taker=record.is_taker,
         )
 
     # --- PnL Operations ---

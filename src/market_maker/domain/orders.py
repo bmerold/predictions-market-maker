@@ -260,7 +260,30 @@ class Fill:
     size: Quantity  # Fill size
     timestamp: datetime
     is_simulated: bool  # True for paper trading fills
+    is_taker: bool | None = None  # True if we took liquidity (higher fees)
 
     def notional(self) -> Decimal:
         """Return notional value (price * size)."""
         return self.price.value * Decimal(self.size.value)
+
+    def estimated_fee(self) -> Decimal:
+        """Estimate fee for this fill using Kalshi formula.
+
+        Kalshi fee = rate × contracts × P × (1-P)
+        - Taker rate: 7% (0.07)
+        - Maker rate: 1.75% (0.0175)
+
+        Returns:
+            Estimated fee in dollars
+        """
+        p = self.price.value
+        contracts = self.size.value
+
+        if self.is_taker is True:
+            rate = Decimal("0.07")  # Taker fee
+        elif self.is_taker is False:
+            rate = Decimal("0.0175")  # Maker fee
+        else:
+            rate = Decimal("0.0175")  # Assume maker if unknown
+
+        return rate * Decimal(contracts) * p * (Decimal("1") - p)

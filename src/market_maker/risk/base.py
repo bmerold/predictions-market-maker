@@ -74,9 +74,21 @@ class RiskContext:
     current_volatility: Decimal  # Current volatility estimate
     order_book: OrderBook  # Current order book
 
+    # Pending exposure from resting orders (to prevent over-trading)
+    pending_bid_exposure: int = 0  # Size of resting bid orders that could fill
+    pending_ask_exposure: int = 0  # Size of resting ask orders that could fill
+
     def total_pnl(self) -> Decimal:
         """Return total PnL (realized + unrealized)."""
         return self.realized_pnl + self.unrealized_pnl
+
+    def effective_inventory_if_bids_fill(self) -> int:
+        """Return inventory if all pending bids fill."""
+        return self.current_inventory + self.pending_bid_exposure
+
+    def effective_inventory_if_asks_fill(self) -> int:
+        """Return inventory if all pending asks fill."""
+        return self.current_inventory - self.pending_ask_exposure
 
 
 class RiskRule(ABC):

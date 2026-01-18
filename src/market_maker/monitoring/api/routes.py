@@ -59,6 +59,7 @@ class StatusResponse(BaseModel):
     mode: str
     markets: list[MarketStatus]
     total_pnl: float
+    total_fees: float
     start_time: str
     current_time: str
 
@@ -89,6 +90,8 @@ class FillInfo(BaseModel):
     size: int
     timestamp: str
     is_simulated: bool
+    is_taker: bool | None = None  # True if we took liquidity (higher fees)
+    estimated_fee: float | None = None  # Estimated fee in dollars
 
 
 class ConfigUpdate(BaseModel):
@@ -173,12 +176,14 @@ def create_monitoring_router(
                 )
 
         total_pnl = sum(m.total_pnl for m in markets)
+        total_fees = float(state_store.total_fees) if state_store else 0.0
 
         return StatusResponse(
             running=controller.is_running if controller else False,
             mode=mode,
             markets=markets,
             total_pnl=total_pnl,
+            total_fees=total_fees,
             start_time=_start_time.isoformat(),
             current_time=now.isoformat(),
         )
@@ -223,6 +228,8 @@ def create_monitoring_router(
                 size=f.size.value,
                 timestamp=f.timestamp.isoformat(),
                 is_simulated=f.is_simulated,
+                is_taker=f.is_taker,
+                estimated_fee=float(f.estimated_fee()),
             )
             for f in fills[-limit:]
         ]

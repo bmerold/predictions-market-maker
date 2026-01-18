@@ -82,6 +82,11 @@ class StrategyEngine:
         self._spread = spread_calculator
         self._sizer = sizer
 
+    @property
+    def volatility_estimator(self) -> VolatilityEstimator:
+        """Return the volatility estimator for external updates."""
+        return self._volatility
+
     def generate_quotes(self, input_data: StrategyInput) -> QuoteSet:
         """Generate a complete quote set for a market.
 

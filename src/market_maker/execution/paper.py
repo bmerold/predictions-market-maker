@@ -179,6 +179,7 @@ class PaperExecutionEngine(ExecutionEngine):
             size=Quantity(fill_size),
             timestamp=datetime.now(UTC),
             is_simulated=True,
+            is_taker=False,  # As market makers, we provide liquidity (maker)
         )
         self._fills.append(fill)
 

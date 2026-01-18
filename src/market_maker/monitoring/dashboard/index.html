@@ -733,6 +733,9 @@
                     document.getElementById('unrealized-pnl').textContent = formatCurrency(market.unrealized_pnl);
                 }
 
+                // Update fees
+                document.getElementById('fees').textContent = formatCurrency(data.total_fees || 0);
+
                 // Update total PnL from all markets
                 totalPnl = data.total_pnl;
                 const totalPnlEl = document.getElementById('total-pnl');

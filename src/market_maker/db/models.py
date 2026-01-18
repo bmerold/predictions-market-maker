@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Integer, Numeric, String
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -58,6 +58,7 @@ class FillRecord(Base):
     size: Mapped[int] = mapped_column(Integer)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     is_simulated: Mapped[bool] = mapped_column(default=False)
+    is_taker: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     session_id: Mapped[str] = mapped_column(String(64), index=True)
 
     def __repr__(self) -> str:

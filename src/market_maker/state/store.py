@@ -296,23 +296,23 @@ class StateStore:
     def _calculate_fee(self, fill: Fill) -> Decimal:
         """Calculate fee for a fill using Kalshi's formula.
 
-        Kalshi fees: round_up(rate × contracts × P × (1-P))
+        Kalshi fees: rate × contracts × P × (1-P)
         - Taker rate: 0.07
         - Maker rate: 0.0175
+
+        At mid prices (0.50), maker fee is only ~0.44 cents per contract.
+        We track the actual fee amount for accurate PnL.
 
         Args:
             fill: The fill
 
         Returns:
-            Fee amount in dollars
+            Fee amount in dollars (actual, not rounded)
         """
         p = fill.price.value
         contracts = fill.size.value
         # Kalshi formula: rate × contracts × P × (1-P)
-        # Round up to nearest cent
-        raw_fee = self._fee_rate * Decimal(contracts) * p * (1 - p)
-        # Round up to nearest cent (0.01)
-        return (raw_fee * 100).to_integral_value(rounding="ROUND_CEILING") / 100
+        return self._fee_rate * Decimal(contracts) * p * (1 - p)
 
     def calculate_unrealized_pnl(
         self, market_id: str, mark_price: Price

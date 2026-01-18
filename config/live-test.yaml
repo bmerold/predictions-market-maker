@@ -1,0 +1,86 @@
+# LIVE TRADING CONFIG - COMFORTABLE TEST ($100-200)
+# WARNING: This places REAL orders with REAL money!
+
+mode: live  # REAL MONEY
+
+exchange:
+  type: kalshi
+  demo: false
+
+# Market to trade - UPDATE THIS before running!
+markets:
+  - ticker: "KXBTC15M-26JAN181315-15"  # 15-minute BTC market
+
+strategy:
+  components:
+    volatility:
+      type: fixed
+      params:
+        volatility: "1.0"  # 100% vol for binary markets (price can go 0 to 1)
+
+    reservation_price:
+      type: avellaneda_stoikov
+      params:
+        gamma: "2.0"  # Risk aversion - gives ~6c adjustment at max inventory
+
+    skew:
+      type: linear
+      params:
+        intensity: "0.20"  # 4x stronger skew - up to 2c adjustment at max inventory
+
+    spread:
+      type: avellaneda_stoikov
+      params:
+        gamma: "0.5"  # Risk aversion - higher = wider spread
+        k: "1.5"  # Order arrival rate
+        min_spread: "0.03"  # Min 3c spread to cover fees
+        max_spread: "0.10"  # Max 10c - wider for volatile markets
+        volatility: "0.10"  # 10% vol for binary market (not the global 5.0)
+
+    sizer:
+      type: asymmetric
+      params:
+        base_size: "1"  # Smaller size to reduce risk per trade
+
+  max_inventory: 12  # Stop quoting one side at 12 (was 4 - too restrictive)
+  min_spread: "0.02"
+
+risk:
+  rule_order:
+    - stale_data
+    - settlement_cutoff
+    - daily_loss_limit
+    - hourly_loss_limit
+    - max_inventory
+    - max_order_size
+
+  rules:
+    stale_data:
+      enabled: true
+      max_age_seconds: 60  # Increased for hourly markets with less activity
+
+    settlement_cutoff:
+      enabled: true
+      cutoff_minutes: 2  # Stop 2 min before settlement
+
+    daily_loss_limit:
+      enabled: true
+      limit: "20.00"  # $20 max daily loss
+
+    hourly_loss_limit:
+      enabled: true
+      limit: "10.00"
+
+    max_inventory:
+      enabled: true
+      limit: "12"  # Match strategy max_inventory (increased from 4)
+
+    max_order_size:
+      enabled: true
+      limit: "2"  # Max 2 contracts per order
+
+quote_interval_ms: 1000  # Quote every 1 second (faster reaction to book changes)
+reconciliation_interval_seconds: 30
+
+log_level: INFO
+api_port: 8080

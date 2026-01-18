@@ -35,47 +35,57 @@ class MaxInventoryRule(RiskRule):
     ) -> RiskDecision:
         """Check if quotes would cause inventory to exceed limit.
 
+        Considers both current inventory AND pending exposure from resting orders.
+        This prevents placing new orders when existing orders could already push
+        us over the limit if filled.
+
         Args:
             proposed_quotes: The proposed quotes
             context: Current state
 
         Returns:
-            BLOCK if either direction would exceed limit, ALLOW otherwise
+            BLOCK if any direction would exceed limit, ALLOW otherwise
         """
         current = context.current_inventory
+        pending_bids = context.pending_bid_exposure
+        pending_asks = context.pending_ask_exposure
         bid_size = proposed_quotes.yes_quote.bid_size.value
         ask_size = proposed_quotes.yes_quote.ask_size.value
 
-        # FIRST: Block ALL quotes if already significantly over limit
-        if abs(current) >= self._max_inventory:
-            # Already at or over limit - only allow trades that reduce inventory
-            if current > 0 and bid_size > 0:
-                return RiskDecision(
-                    action=RiskAction.BLOCK,
-                    reason=f"Already at max long inventory ({current} >= {self._max_inventory}), "
-                    f"blocking further buys",
-                )
-            if current < 0 and ask_size > 0:
-                return RiskDecision(
-                    action=RiskAction.BLOCK,
-                    reason=f"Already at max short inventory ({current} <= -{self._max_inventory}), "
-                    f"blocking further sells",
-                )
+        # Effective inventory if all pending orders fill
+        effective_long = current + pending_bids  # If all bids fill
+        effective_short = current - pending_asks  # If all asks fill
 
-        # Check if buying (bid filled) would exceed long limit
-        if current + bid_size > self._max_inventory:
+        # Check if at/over long limit - block bids
+        if effective_long >= self._max_inventory and bid_size > 0:
+            return RiskDecision(
+                action=RiskAction.BLOCK,
+                reason=f"At max long inventory ({current} + {pending_bids} pending >= {self._max_inventory}), "
+                f"blocking further buys",
+            )
+
+        # Check if at/over short limit - block asks
+        if effective_short <= -self._max_inventory and ask_size > 0:
+            return RiskDecision(
+                action=RiskAction.BLOCK,
+                reason=f"At max short inventory ({current} - {pending_asks} pending <= -{self._max_inventory}), "
+                f"blocking further sells",
+            )
+
+        # Check if new bid + pending would exceed long inventory limit
+        if effective_long + bid_size > self._max_inventory:
             return RiskDecision(
                 action=RiskAction.BLOCK,
                 reason=f"Buying {bid_size} would exceed inventory limit "
-                f"({current} + {bid_size} > {self._max_inventory})",
+                f"({current} inv + {pending_bids} pending + {bid_size} new > {self._max_inventory})",
             )
 
-        # Check if selling (ask filled) would exceed short limit
-        if current - ask_size < -self._max_inventory:
+        # Check if new ask + pending would exceed short inventory limit
+        if effective_short - ask_size < -self._max_inventory:
             return RiskDecision(
                 action=RiskAction.BLOCK,
-                reason=f"Selling {ask_size} would exceed short limit "
-                f"({current} - {ask_size} < -{self._max_inventory})",
+                reason=f"Selling {ask_size} would exceed inventory limit "
+                f"({current} inv - {pending_asks} pending - {ask_size} new < -{self._max_inventory})",
             )
 
         return RiskDecision(action=RiskAction.ALLOW)

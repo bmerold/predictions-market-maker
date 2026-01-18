@@ -96,6 +96,19 @@ class OrderDiffer:
             new_request = request_map.get(quote_type)
             current_order = self._get_current_order(current_orders, quote_type)
 
+            # Skip orders at unfillable prices or with size 0 (used for one-sided quoting)
+            # Bid at 0.01 or Ask at 0.99 indicates "don't place this side"
+            # Size 0 also means "don't place this side"
+            if new_request:
+                price = new_request.price.value
+                size = new_request.size.value
+                if size <= 0:
+                    new_request = None  # Skip zero-size orders
+                elif quote_type == "yes_bid" and price <= Decimal("0.01"):
+                    new_request = None  # Skip this bid
+                elif quote_type == "yes_ask" and price >= Decimal("0.99"):
+                    new_request = None  # Skip this ask
+
             action = self._diff_single(quote_type, new_request, current_order)
             if action:
                 actions.append(action)

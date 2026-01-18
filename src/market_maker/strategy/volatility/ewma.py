@@ -45,6 +45,7 @@ class EWMAVolatilityEstimator(VolatilityEstimator):
         # Current variance (volatility squared)
         self._variance = initial_volatility ** 2
         self._last_price: Decimal | None = None
+        self._last_mid_price: Decimal | None = None  # For book-based updates
         self._sample_count = 0
 
     @property
@@ -88,6 +89,34 @@ class EWMAVolatilityEstimator(VolatilityEstimator):
         self._update_variance(return_value)
         self._sample_count += 1
 
+    def update_from_mid_price(self, mid_price: Decimal) -> None:
+        """Update volatility estimate from order book mid price.
+
+        This allows the volatility estimator to react to book changes,
+        not just trades. Useful for faster-reacting volatility estimates
+        in markets with infrequent trades.
+
+        Uses a lower weight (half of alpha) to avoid overreacting to
+        book noise vs actual trades.
+
+        Args:
+            mid_price: Current mid price from order book
+        """
+        if self._last_mid_price is not None and self._last_mid_price > 0:
+            # Calculate return from mid price change
+            ret = (mid_price - self._last_mid_price) / self._last_mid_price
+
+            # Only update if there's a meaningful price change (> 0.1%)
+            if abs(ret) > Decimal("0.001"):
+                # Use half alpha for book updates to avoid overreacting
+                book_alpha = self._alpha / 2
+                return_squared = ret ** 2
+                one_minus_alpha = Decimal("1") - book_alpha
+                self._variance = book_alpha * return_squared + one_minus_alpha * self._variance
+                self._sample_count += 1
+
+        self._last_mid_price = mid_price
+
     def _update_variance(self, return_value: Decimal) -> None:
         """Apply the EWMA formula to update variance.
 
@@ -111,6 +140,7 @@ class EWMAVolatilityEstimator(VolatilityEstimator):
         """Reset to initial state."""
         self._variance = self._initial_volatility ** 2
         self._last_price = None
+        self._last_mid_price = None
         self._sample_count = 0
 
     def is_ready(self) -> bool:

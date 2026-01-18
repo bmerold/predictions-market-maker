@@ -337,6 +337,10 @@ class KalshiNormalizer:
         # Size field varies - try multiple names
         size = data.get("count") or data.get("size") or data.get("fill_count") or 1
 
+        # Capture is_taker for fee calculation
+        # Kalshi returns this boolean to indicate if we took or provided liquidity
+        is_taker = data.get("is_taker")  # May be None if not present
+
         return Fill(
             id=data.get("trade_id") or data.get("fill_id", ""),
             order_id=data.get("order_id", ""),
@@ -347,6 +351,7 @@ class KalshiNormalizer:
             size=Quantity(size),
             timestamp=self.normalize_timestamp(data.get("created_time")),
             is_simulated=False,
+            is_taker=is_taker,
         )
 
     def normalize_position(self, data: dict[str, Any]) -> Position:
