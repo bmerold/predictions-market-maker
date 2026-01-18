@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from market_maker.core.config import ExchangeType, ExecutionMode, TradingConfig
 from market_maker.db.repository import TradingRepository
 from market_maker.domain.events import BookUpdate, Event, EventType, FillEvent
+from market_maker.domain.orders import Fill
 from market_maker.domain.market_data import OrderBook
 from market_maker.domain.orders import QuoteSet
 from market_maker.domain.positions import Position
@@ -90,12 +91,16 @@ class TradingController:
         self._quote_task: asyncio.Task[None] | None = None
         self._reconcile_task: asyncio.Task[None] | None = None
         self._pnl_log_task: asyncio.Task[None] | None = None
+        self._api_task: asyncio.Task[None] | None = None
 
         # Session tracking
         self._session_id = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         self._start_time = datetime.now(UTC)
         self._fill_count = 0
         self._quote_count = 0
+
+        # Fill history for API
+        self._fills: list[Fill] = []
 
     async def start(self) -> None:
         """Start the trading controller.
@@ -130,6 +135,12 @@ class TradingController:
         self._reconcile_task = asyncio.create_task(self._reconciliation_loop())
         self._pnl_log_task = asyncio.create_task(self._pnl_logging_loop())
 
+        # Start API server if configured
+        api_port = getattr(self._config, "api_port", None) or 8080
+        if api_port:
+            self._api_task = asyncio.create_task(self._run_api_server(api_port))
+            logger.info(f"API server started on http://localhost:{api_port}")
+
         logger.info(f"Trading controller started (session: {self._session_id})")
 
         # Wait for shutdown
@@ -143,6 +154,85 @@ class TradingController:
         logger.info("Stopping trading controller")
         self._running = False
         self._shutdown_event.set()
+
+    @property
+    def is_running(self) -> bool:
+        """Check if the controller is running."""
+        return self._running
+
+    @property
+    def state_store(self) -> StateStore | None:
+        """Get the state store for API access."""
+        return self._state
+
+    def get_open_orders(self, market_id: str) -> list:
+        """Get open orders for a market."""
+        # For paper trading, we don't maintain open orders
+        # In live mode, this would query the execution engine
+        return []
+
+    def get_fills(self, market_id: str) -> list[Fill]:
+        """Get fills for a market."""
+        return [f for f in self._fills if f.market_id == market_id]
+
+    def get_config(self) -> dict:
+        """Get current configuration for API."""
+        strategy_config = self._config.strategy
+        return {
+            "gamma": str(strategy_config.components.reservation_price.params.get("gamma", "0.1")),
+            "sigma": str(strategy_config.components.volatility.params.get("volatility", "0.05")),
+            "min_spread": str(strategy_config.min_spread),
+            "max_inventory": strategy_config.max_inventory,
+            "kill_switch_active": (
+                self._risk_manager.kill_switch.is_active()
+                if self._risk_manager
+                else False
+            ),
+        }
+
+    def update_config(self, updates: dict) -> None:
+        """Update configuration at runtime."""
+        # This would update the strategy/risk params
+        # For now, just log
+        logger.info(f"Config update requested: {updates}")
+
+    async def activate_kill_switch(self) -> None:
+        """Activate the kill switch."""
+        if self._risk_manager:
+            self._risk_manager.kill_switch.activate("API request")
+            logger.warning("Kill switch activated via API")
+
+    def deactivate_kill_switch(self) -> None:
+        """Deactivate the kill switch."""
+        if self._risk_manager:
+            self._risk_manager.kill_switch.reset()
+            logger.info("Kill switch deactivated via API")
+
+    async def _run_api_server(self, port: int) -> None:
+        """Run the API server."""
+        try:
+            import uvicorn
+
+            from market_maker.monitoring.api.routes import create_app
+
+            app = create_app(
+                controller=self,
+                state_store=self._state,
+                mode=self._config.mode.value,
+            )
+
+            config = uvicorn.Config(
+                app,
+                host="0.0.0.0",
+                port=port,
+                log_level="warning",  # Reduce uvicorn noise
+            )
+            server = uvicorn.Server(config)
+            await server.serve()
+        except ImportError:
+            logger.warning("uvicorn not installed, API server disabled")
+        except Exception as e:
+            logger.error(f"API server error: {e}")
 
     async def _init_components(self) -> None:
         """Initialize all trading components."""
@@ -345,6 +435,7 @@ class TradingController:
         """
         fill = event.fill
         self._fill_count += 1
+        self._fills.append(fill)
 
         if self._state:
             self._state.apply_fill(fill)
@@ -534,6 +625,7 @@ class TradingController:
 
         for fill in fills:
             self._fill_count += 1
+            self._fills.append(fill)
 
             if self._state:
                 self._state.apply_fill(fill)
@@ -650,6 +742,11 @@ class TradingController:
             self._pnl_log_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._pnl_log_task
+
+        if self._api_task:
+            self._api_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._api_task
 
         # Disconnect from exchange
         if self._exchange:

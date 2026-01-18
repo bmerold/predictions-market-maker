@@ -5,6 +5,7 @@ Provides REST API for:
 - Monitoring positions and PnL
 - Runtime configuration control
 - Health checks
+- Web dashboard
 """
 
 from __future__ import annotations
@@ -12,9 +13,11 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -368,5 +371,20 @@ def create_app(
         mode=mode,
     )
     app.include_router(router)
+
+    # Serve dashboard
+    dashboard_path = Path(__file__).parent.parent / "dashboard" / "index.html"
+
+    @app.get("/", response_class=HTMLResponse)
+    async def serve_dashboard() -> FileResponse:
+        """Serve the web dashboard."""
+        if dashboard_path.exists():
+            return FileResponse(dashboard_path, media_type="text/html")
+        return HTMLResponse(
+            content="<h1>Dashboard not found</h1><p>Looking for: {}</p>".format(
+                dashboard_path
+            ),
+            status_code=404,
+        )
 
     return app

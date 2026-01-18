@@ -166,6 +166,9 @@ class TradingConfig(BaseModel):
     quote_interval_ms: int = 1000  # How often to refresh quotes
     reconciliation_interval_seconds: int = 60  # Position reconciliation
 
+    # API server
+    api_port: int | None = 8080  # Set to None to disable
+
     # Logging
     log_level: str = "INFO"
     log_file: str | None = None

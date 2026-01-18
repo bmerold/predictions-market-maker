@@ -14,7 +14,7 @@ exchange:
 # Format: KXBTCD-{DATE}{HOUR}H-T{STRIKE}
 # Example: KXBTCD-25JAN17H16-T105249.99
 markets:
-  - ticker: "KXBTCD-26JAN1817-T95499.99"
+  - ticker: "KXBTCD-26JAN1817-T94999.99"
 
 strategy:
   components:

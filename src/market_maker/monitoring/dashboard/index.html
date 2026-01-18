@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Maker Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --border-color: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --green: #3fb950;
+            --red: #f85149;
+            --yellow: #d29922;
+            --blue: #58a6ff;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .status-running {
+            background: rgba(63, 185, 80, 0.2);
+            color: var(--green);
+        }
+
+        .status-stopped {
+            background: rgba(248, 81, 73, 0.2);
+            color: var(--red);
+        }
+
+        .status-connecting {
+            background: rgba(210, 153, 34, 0.2);
+            color: var(--yellow);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .card h2 {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric {
+            margin-bottom: 16px;
+        }
+
+        .metric:last-child {
+            margin-bottom: 0;
+        }
+
+        .metric-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .metric-value {
+            font-size: 28px;
+            font-weight: 600;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+        }
+
+        .metric-value.positive {
+            color: var(--green);
+        }
+
+        .metric-value.negative {
+            color: var(--red);
+        }
+
+        .metric-value.neutral {
+            color: var(--text-primary);
+        }
+
+        .metric-small {
+            font-size: 18px;
+        }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .row:last-child {
+            border-bottom: none;
+        }
+
+        .row-label {
+            color: var(--text-secondary);
+        }
+
+        .row-value {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            text-align: left;
+            padding: 10px 8px;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            font-weight: 500;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        td {
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border-color);
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+        }
+
+        tr:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .side-buy {
+            color: var(--green);
+        }
+
+        .side-sell {
+            color: var(--red);
+        }
+
+        .controls {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid var(--border-color);
+            transition: all 0.2s;
+        }
+
+        .btn-danger {
+            background: var(--red);
+            color: white;
+            border-color: var(--red);
+        }
+
+        .btn-danger:hover {
+            background: #da3633;
+        }
+
+        .btn-success {
+            background: var(--green);
+            color: white;
+            border-color: var(--green);
+        }
+
+        .btn-success:hover {
+            background: #2ea043;
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border-color);
+        }
+
+        .config-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .config-row label {
+            width: 100px;
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .config-row input {
+            flex: 1;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-family: 'SF Mono', monospace;
+        }
+
+        .config-row input:focus {
+            outline: none;
+            border-color: var(--blue);
+        }
+
+        .connection-error {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid var(--red);
+            color: var(--red);
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .time-display {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+
+        .fill-simulated {
+            opacity: 0.7;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .loading {
+            animation: pulse 1.5s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div id="connection-error" class="connection-error">
+        Unable to connect to API. Make sure the market maker is running with the API server enabled.
+    </div>
+
+    <div class="header">
+        <h1>Market Maker Dashboard</h1>
+        <div>
+            <span id="status-badge" class="status-badge status-connecting">Connecting...</span>
+            <span id="mode-badge" class="status-badge" style="margin-left: 8px; background: rgba(88, 166, 255, 0.2); color: var(--blue);">--</span>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h2>Profit & Loss</h2>
+            <div class="metric">
+                <div class="metric-label">Total PnL</div>
+                <div id="total-pnl" class="metric-value neutral">$0.00</div>
+            </div>
+            <div class="row">
+                <span class="row-label">Realized</span>
+                <span id="realized-pnl" class="row-value">$0.00</span>
+            </div>
+            <div class="row">
+                <span class="row-label">Unrealized</span>
+                <span id="unrealized-pnl" class="row-value">$0.00</span>
+            </div>
+            <div class="row">
+                <span class="row-label">Fees</span>
+                <span id="fees" class="row-value">$0.00</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Position</h2>
+            <div class="metric">
+                <div class="metric-label">Net Inventory</div>
+                <div id="net-inventory" class="metric-value metric-small neutral">0</div>
+            </div>
+            <div class="row">
+                <span class="row-label">YES Contracts</span>
+                <span id="yes-position" class="row-value">0</span>
+            </div>
+            <div class="row">
+                <span class="row-label">NO Contracts</span>
+                <span id="no-position" class="row-value">0</span>
+            </div>
+            <div class="row">
+                <span class="row-label">Avg YES Price</span>
+                <span id="avg-yes-price" class="row-value">--</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Session Stats</h2>
+            <div class="row">
+                <span class="row-label">Runtime</span>
+                <span id="runtime" class="row-value">--</span>
+            </div>
+            <div class="row">
+                <span class="row-label">Total Fills</span>
+                <span id="fill-count" class="row-value">0</span>
+            </div>
+            <div class="row">
+                <span class="row-label">Quotes Sent</span>
+                <span id="quote-count" class="row-value">0</span>
+            </div>
+            <div class="row">
+                <span class="row-label">Market</span>
+                <span id="market-id" class="row-value" style="font-size: 11px;">--</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Controls</h2>
+            <div class="config-row">
+                <label>Gamma</label>
+                <input type="number" id="config-gamma" step="0.01" value="0.1">
+            </div>
+            <div class="config-row">
+                <label>Min Spread</label>
+                <input type="number" id="config-spread" step="0.01" value="0.02">
+            </div>
+            <div class="config-row">
+                <label>Max Inventory</label>
+                <input type="number" id="config-inventory" step="1" value="100">
+            </div>
+            <div class="controls">
+                <button class="btn-secondary" onclick="updateConfig()">Update Config</button>
+                <button id="kill-switch-btn" class="btn-danger" onclick="toggleKillSwitch()">Kill Switch</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Recent Fills</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Side</th>
+                    <th>Type</th>
+                    <th>Price</th>
+                    <th>Size</th>
+                    <th>Market</th>
+                </tr>
+            </thead>
+            <tbody id="fills-table">
+                <tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">No fills yet</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="time-display">
+        Last updated: <span id="last-update">--</span>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin + '/api/v1';
+        let killSwitchActive = false;
+        let lastFillCount = 0;
+
+        function formatCurrency(value) {
+            const num = parseFloat(value) || 0;
+            const formatted = Math.abs(num).toFixed(2);
+            return (num < 0 ? '-' : '') + '$' + formatted;
+        }
+
+        function formatPrice(value) {
+            return parseFloat(value).toFixed(2);
+        }
+
+        function formatTime(isoString) {
+            const date = new Date(isoString);
+            return date.toLocaleTimeString();
+        }
+
+        function formatRuntime(startTime) {
+            const start = new Date(startTime);
+            const now = new Date();
+            const diff = Math.floor((now - start) / 1000);
+            const hours = Math.floor(diff / 3600);
+            const minutes = Math.floor((diff % 3600) / 60);
+            const seconds = diff % 60;
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function getPnlClass(value) {
+            const num = parseFloat(value) || 0;
+            if (num > 0) return 'positive';
+            if (num < 0) return 'negative';
+            return 'neutral';
+        }
+
+        async function fetchStatus() {
+            try {
+                const response = await fetch(API_BASE + '/status');
+                if (!response.ok) throw new Error('API error');
+                const data = await response.json();
+
+                document.getElementById('connection-error').style.display = 'none';
+
+                // Update status badge
+                const statusBadge = document.getElementById('status-badge');
+                if (data.running) {
+                    statusBadge.textContent = 'Running';
+                    statusBadge.className = 'status-badge status-running';
+                } else {
+                    statusBadge.textContent = 'Stopped';
+                    statusBadge.className = 'status-badge status-stopped';
+                }
+
+                // Update mode badge
+                document.getElementById('mode-badge').textContent = data.mode.toUpperCase();
+
+                // Update runtime
+                document.getElementById('runtime').textContent = formatRuntime(data.start_time);
+
+                // Update market data if available
+                if (data.markets && data.markets.length > 0) {
+                    const market = data.markets[0];
+                    document.getElementById('market-id').textContent = market.market_id;
+
+                    // Position
+                    document.getElementById('yes-position').textContent = market.yes_position;
+                    document.getElementById('no-position').textContent = market.no_position;
+                    const netInv = document.getElementById('net-inventory');
+                    netInv.textContent = market.net_inventory;
+                    netInv.className = 'metric-value metric-small ' + getPnlClass(market.net_inventory);
+
+                    // PnL
+                    const totalPnl = document.getElementById('total-pnl');
+                    totalPnl.textContent = formatCurrency(market.total_pnl);
+                    totalPnl.className = 'metric-value ' + getPnlClass(market.total_pnl);
+
+                    document.getElementById('realized-pnl').textContent = formatCurrency(market.realized_pnl);
+                    document.getElementById('unrealized-pnl').textContent = formatCurrency(market.unrealized_pnl);
+                }
+
+                // Update total PnL from all markets
+                const totalPnlEl = document.getElementById('total-pnl');
+                totalPnlEl.textContent = formatCurrency(data.total_pnl);
+                totalPnlEl.className = 'metric-value ' + getPnlClass(data.total_pnl);
+
+                document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+
+            } catch (error) {
+                console.error('Failed to fetch status:', error);
+                document.getElementById('connection-error').style.display = 'block';
+                document.getElementById('status-badge').textContent = 'Disconnected';
+                document.getElementById('status-badge').className = 'status-badge status-stopped';
+            }
+        }
+
+        async function fetchFills() {
+            try {
+                const statusResp = await fetch(API_BASE + '/status');
+                const statusData = await statusResp.json();
+
+                if (!statusData.markets || statusData.markets.length === 0) return;
+
+                const marketId = statusData.markets[0].market_id;
+                const response = await fetch(API_BASE + '/markets/' + encodeURIComponent(marketId) + '/fills?limit=20');
+                if (!response.ok) return;
+
+                const fills = await response.json();
+                const tbody = document.getElementById('fills-table');
+
+                if (fills.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">No fills yet</td></tr>';
+                    return;
+                }
+
+                // Update fill count
+                document.getElementById('fill-count').textContent = fills.length;
+
+                // Reverse to show most recent first
+                const recentFills = fills.slice().reverse().slice(0, 20);
+
+                tbody.innerHTML = recentFills.map(fill => `
+                    <tr class="${fill.is_simulated ? 'fill-simulated' : ''}">
+                        <td>${formatTime(fill.timestamp)}</td>
+                        <td class="${fill.order_side === 'buy' ? 'side-buy' : 'side-sell'}">${fill.order_side.toUpperCase()}</td>
+                        <td>${fill.side.toUpperCase()}</td>
+                        <td>${formatPrice(fill.price)}</td>
+                        <td>${fill.size}</td>
+                        <td style="font-size: 10px;">${fill.market_id.substring(0, 20)}...</td>
+                    </tr>
+                `).join('');
+
+            } catch (error) {
+                console.error('Failed to fetch fills:', error);
+            }
+        }
+
+        async function fetchConfig() {
+            try {
+                const response = await fetch(API_BASE + '/config');
+                if (!response.ok) return;
+
+                const config = await response.json();
+                document.getElementById('config-gamma').value = config.gamma;
+                document.getElementById('config-spread').value = config.min_spread;
+                document.getElementById('config-inventory').value = config.max_inventory;
+
+                killSwitchActive = config.kill_switch_active;
+                updateKillSwitchButton();
+
+            } catch (error) {
+                console.error('Failed to fetch config:', error);
+            }
+        }
+
+        async function updateConfig() {
+            try {
+                const response = await fetch(API_BASE + '/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        gamma: parseFloat(document.getElementById('config-gamma').value),
+                        min_spread: parseFloat(document.getElementById('config-spread').value),
+                        max_inventory: parseInt(document.getElementById('config-inventory').value)
+                    })
+                });
+
+                if (response.ok) {
+                    alert('Configuration updated');
+                } else {
+                    alert('Failed to update configuration');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function toggleKillSwitch() {
+            const endpoint = killSwitchActive ? '/kill-switch/deactivate' : '/kill-switch/activate';
+            try {
+                const response = await fetch(API_BASE + endpoint, { method: 'POST' });
+                if (response.ok) {
+                    killSwitchActive = !killSwitchActive;
+                    updateKillSwitchButton();
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        function updateKillSwitchButton() {
+            const btn = document.getElementById('kill-switch-btn');
+            if (killSwitchActive) {
+                btn.textContent = 'Resume Trading';
+                btn.className = 'btn-success';
+            } else {
+                btn.textContent = 'Kill Switch';
+                btn.className = 'btn-danger';
+            }
+        }
+
+        // Initial fetch
+        fetchStatus();
+        fetchFills();
+        fetchConfig();
+
+        // Poll every second
+        setInterval(fetchStatus, 1000);
+        setInterval(fetchFills, 2000);
+        setInterval(fetchConfig, 5000);
+    </script>
+</body>
+</html>
