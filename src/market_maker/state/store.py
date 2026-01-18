@@ -76,6 +76,33 @@ class StateStore:
         """
         return self._positions.get(market_id)
 
+    def get_market_ids(self) -> list[str]:
+        """Get all market IDs with positions.
+
+        Returns:
+            List of market IDs
+        """
+        return list(self._positions.keys())
+
+    def get_pnl(self, market_id: str) -> "PnL | None":
+        """Get PnL for a market.
+
+        Args:
+            market_id: Market to get PnL for
+
+        Returns:
+            PnL object or None
+        """
+        position = self._positions.get(market_id)
+        if position is None:
+            return None
+
+        return PnL(
+            realized=self._realized_pnl,
+            unrealized=Decimal("0"),  # Would need mark price
+            total=self._realized_pnl,
+        )
+
     def get_net_inventory(self, market_id: str) -> int:
         """Get net inventory for a market (YES - NO).
 
@@ -320,3 +347,17 @@ class StateStore:
     def reset_daily_pnl(self) -> None:
         """Reset daily PnL counter (called at start of each day)."""
         self._daily_pnl = Decimal("0")
+
+
+class PnL:
+    """Simple PnL data class for API."""
+
+    def __init__(
+        self,
+        realized: Decimal,
+        unrealized: Decimal,
+        total: Decimal,
+    ) -> None:
+        self.realized = realized
+        self.unrealized = unrealized
+        self.total = total
